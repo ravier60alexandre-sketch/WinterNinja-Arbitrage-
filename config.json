@@ -21,14 +21,12 @@
     { "asset_a": "xyz:PLTR",      "asset_b": "km:PLTR",        "label": "PLTR      · XYZ vs KM"   },
     { "asset_a": "xyz:AAPL",      "asset_b": "km:AAPL",        "label": "AAPL      · XYZ vs KM"   },
     { "asset_a": "xyz:MU",        "asset_b": "km:MU",          "label": "MU        · XYZ vs KM"   },
-    { "asset_a": "xyz:EUR",       "asset_b": "km:EUR",         "label": "EUR       · XYZ vs KM"   },
     { "asset_a": "xyz:BABA",      "asset_b": "km:BABA",        "label": "BABA      · XYZ vs KM"   },
     { "asset_a": "xyz:HOOD",      "asset_b": "cash:HOOD",      "label": "HOOD      · XYZ vs CASH" },
     { "asset_a": "xyz:INTC",      "asset_b": "cash:INTC",      "label": "INTC      · XYZ vs CASH" },
     { "asset_a": "xyz:AMZN",      "asset_b": "cash:AMZN",      "label": "AMZN      · XYZ vs CASH" },
     { "asset_a": "xyz:META",      "asset_b": "cash:META",      "label": "META      · XYZ vs CASH" },
-    { "asset_a": "xyz:MSFT",      "asset_b": "cash:MSFT",      "label": "MSFT      · XYZ vs CASH" },
-    { "asset_a": "xyz:WY",        "asset_b": "cash:WY",        "label": "WY        · XYZ vs CASH" }
+    { "asset_a": "xyz:MSFT",      "asset_b": "cash:MSFT",      "label": "MSFT      · XYZ vs CASH" }
   ],
   "min_executable_size": 1.0,
   "fee_assumptions": {

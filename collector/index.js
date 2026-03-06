@@ -13,25 +13,39 @@ let wsClient = null;
 let orderbookManager = null;
 let statsInterval = null;
 let cleanupInterval = null;
+let liveStateInterval = null;
 let lastObservationTime = new Map();
 
 // In-memory latest spreads for SSE
 const latestSpreads = new Map();
 
-function getLatestSpreads() {
-  return latestSpreads;
-}
+// Path for live state file (shared with Next.js dashboard process)
+let liveStatePath = null;
 
-function getConnectionStatus() {
-  return wsClient ? wsClient.isConnected() : false;
-}
+function writeLiveState() {
+  if (!liveStatePath) return;
 
-function getActivePairs() {
-  return activePairs;
-}
+  const spreads = [];
+  for (const [key, spread] of latestSpreads) {
+    spreads.push(spread);
+  }
 
-function getConfig() {
-  return config;
+  const state = {
+    connected: wsClient ? wsClient.isConnected() : false,
+    timestamp: Date.now(),
+    spreads,
+    pairs: activePairs,
+    config: {
+      fee_assumptions: config.fee_assumptions,
+      rolling_windows: config.rolling_windows
+    }
+  };
+
+  try {
+    fs.writeFileSync(liveStatePath, JSON.stringify(state));
+  } catch (err) {
+    // Non-fatal — dashboard will retry
+  }
 }
 
 function onBookUpdate(msg) {
@@ -86,6 +100,9 @@ async function start(cfg) {
   const dbPath = path.resolve(config.database_path || 'data/spreads.db');
   db.initDatabase(dbPath);
 
+  // Set up live state path
+  liveStatePath = path.resolve(path.dirname(dbPath), 'live-state.json');
+
   // Run cleanup on startup
   db.runCleanup();
 
@@ -97,6 +114,9 @@ async function start(cfg) {
     console.error('[COLLECTOR] No active pairs found. Exiting.');
     process.exit(1);
   }
+
+  // Write initial live state so dashboard can read pairs immediately
+  writeLiveState();
 
   // Collect unique coins to subscribe
   const coins = new Set();
@@ -119,6 +139,9 @@ async function start(cfg) {
   }
 
   console.log(`[COLLECTOR] Subscribed to ${coins.size} coins for ${activePairs.length} pairs`);
+
+  // Write live state every 500ms for the dashboard
+  liveStateInterval = setInterval(writeLiveState, 500);
 
   // Start stats engine
   const statsIntervalMs = config.stats_update_interval_ms || 5000;
@@ -143,6 +166,7 @@ async function start(cfg) {
 }
 
 function stop() {
+  if (liveStateInterval) clearInterval(liveStateInterval);
   if (statsInterval) clearInterval(statsInterval);
   if (cleanupInterval) clearInterval(cleanupInterval);
   if (wsClient) wsClient.close();
@@ -150,4 +174,4 @@ function stop() {
   console.log('[COLLECTOR] Stopped');
 }
 
-module.exports = { start, stop, getLatestSpreads, getConnectionStatus, getActivePairs, getConfig };
+module.exports = { start, stop };

@@ -1,17 +1,18 @@
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-let collectorRef = null;
+const LIVE_STATE_PATH = resolve(process.cwd(), '..', 'data', 'live-state.json');
 
-function getCollector() {
-  if (!collectorRef) {
-    try {
-      collectorRef = require('../../../../collector');
-    } catch (e) {
-      // Collector not yet started
-    }
+function readLiveState() {
+  try {
+    const raw = readFileSync(LIVE_STATE_PATH, 'utf8');
+    return JSON.parse(raw);
+  } catch (e) {
+    return null;
   }
-  return collectorRef;
 }
 
 export async function GET(request) {
@@ -21,28 +22,21 @@ export async function GET(request) {
     start(controller) {
       const sendEvent = () => {
         try {
-          const collector = getCollector();
-          if (!collector) {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: 'Collector not ready' })}\n\n`));
+          const state = readLiveState();
+          if (!state) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: 'Collector not ready', connected: false, timestamp: Date.now(), spreads: [] })}\n\n`));
             return;
           }
 
-          const spreads = collector.getLatestSpreads();
-          const connected = collector.getConnectionStatus();
-
           const payload = {
-            connected,
-            timestamp: Date.now(),
-            spreads: []
+            connected: state.connected || false,
+            timestamp: state.timestamp || Date.now(),
+            spreads: state.spreads || []
           };
-
-          for (const [key, spread] of spreads) {
-            payload.spreads.push(spread);
-          }
 
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
         } catch (err) {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: err.message })}\n\n`));
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: err.message, connected: false, timestamp: Date.now(), spreads: [] })}\n\n`));
         }
       };
 

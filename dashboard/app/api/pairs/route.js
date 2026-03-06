@@ -1,22 +1,25 @@
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+
 export const dynamic = 'force-dynamic';
 
-let collectorRef = null;
+const LIVE_STATE_PATH = resolve(process.cwd(), '..', 'data', 'live-state.json');
 
-function getCollector() {
-  if (!collectorRef) {
-    try { collectorRef = require('../../../collector'); } catch (e) {}
+function readLiveState() {
+  try {
+    return JSON.parse(readFileSync(LIVE_STATE_PATH, 'utf8'));
+  } catch (e) {
+    return null;
   }
-  return collectorRef;
 }
 
 export async function GET() {
-  const collector = getCollector();
-  if (!collector) {
-    return Response.json({ error: 'Collector not ready' }, { status: 503 });
+  const state = readLiveState();
+  if (!state || !state.pairs) {
+    return Response.json({ error: 'Collector not ready', pairs: [], grouped_by_underlying: {}, total: 0 }, { status: 503 });
   }
 
-  const pairs = collector.getActivePairs();
-
+  const pairs = state.pairs;
   const groupedByUnderlying = {};
   for (const pair of pairs) {
     const match = pair.asset_a.match(/^xyz:(.+)$/);

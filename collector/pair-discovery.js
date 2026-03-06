@@ -3,8 +3,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const HIP3_PATTERN = /^(xyz|cash|flx|km):(.+)$/;
 const DEPLOYERS = ['cash', 'flx', 'km'];
+const HIP3_PATTERN = /^(xyz|cash|flx|km):(.+)$/;
 
 function fetchJSON(url, body) {
   return new Promise((resolve, reject) => {
@@ -47,31 +47,44 @@ function fetchJSON(url, body) {
 async function discoverPairsFromAPI(infoUrl) {
   console.log('[DISCOVERY] Fetching active HiP-3 pairs from Hyperliquid API...');
 
-  const response = await fetchJSON(infoUrl, { type: 'meta' });
-  const universe = response.universe || [];
+  // Use perpDexs endpoint to discover all builder-deployed dexes and their assets
+  const dexes = await fetchJSON(infoUrl, { type: 'perpDexs' });
 
-  const hip3Assets = new Map();
-
-  for (const asset of universe) {
-    const name = asset.name || '';
-    const match = name.match(HIP3_PATTERN);
-    if (match) {
-      const deployer = match[1];
-      const coin = match[2];
-      if (!hip3Assets.has(coin)) {
-        hip3Assets.set(coin, new Set());
-      }
-      hip3Assets.get(coin).add(deployer);
-    }
+  if (!Array.isArray(dexes)) {
+    throw new Error('Unexpected perpDexs response format');
   }
 
+  // Collect all assets from relevant dexes (xyz, cash, flx, km)
+  const assetsByDeployer = new Map(); // deployer -> Set of coins
+
+  for (const dex of dexes) {
+    if (!dex || !dex.name) continue;
+    const dexName = dex.name.toLowerCase();
+
+    if (dexName !== 'xyz' && !DEPLOYERS.includes(dexName)) continue;
+
+    const coins = new Set();
+
+    // Extract coins from assetToStreamingOiCap entries
+    if (Array.isArray(dex.assetToStreamingOiCap)) {
+      for (const [assetName] of dex.assetToStreamingOiCap) {
+        const match = assetName.match(HIP3_PATTERN);
+        if (match) {
+          coins.add(match[2]); // the coin part (e.g., SILVER, GOLD)
+        }
+      }
+    }
+
+    assetsByDeployer.set(dexName, coins);
+  }
+
+  const xyzCoins = assetsByDeployer.get('xyz') || new Set();
   const discoveredPairs = [];
 
-  for (const [coin, deployers] of hip3Assets) {
-    if (!deployers.has('xyz')) continue;
-
+  for (const coin of xyzCoins) {
     for (const deployer of DEPLOYERS) {
-      if (deployers.has(deployer)) {
+      const deployerCoins = assetsByDeployer.get(deployer) || new Set();
+      if (deployerCoins.has(coin)) {
         discoveredPairs.push({
           asset_a: `xyz:${coin}`,
           asset_b: `${deployer}:${coin}`,
@@ -82,17 +95,20 @@ async function discoverPairsFromAPI(infoUrl) {
   }
 
   console.log(`[DISCOVERY] Found ${discoveredPairs.length} HiP-3 pairs from API`);
-  return discoveredPairs;
+  console.log(`[DISCOVERY] Dexes found: ${[...assetsByDeployer.keys()].join(', ')} | XYZ coins: ${xyzCoins.size}`);
+  return { pairs: discoveredPairs, liveAssets: assetsByDeployer };
 }
 
-function mergePairs(configPairs, discoveredPairs, cachePath) {
+function mergePairs(configPairs, discoveredPairs, liveAssets, cachePath) {
   const pairKey = (p) => `${p.asset_a}|${p.asset_b}`;
   const merged = new Map();
 
+  // Config pairs first (they have precedence for labels)
   for (const pair of configPairs) {
     merged.set(pairKey(pair), pair);
   }
 
+  // Add API-discovered pairs that aren't in config
   let fromDiscovery = 0;
   for (const pair of discoveredPairs) {
     const key = pairKey(pair);
@@ -102,14 +118,35 @@ function mergePairs(configPairs, discoveredPairs, cachePath) {
     }
   }
 
-  const discoveredKeys = new Set(discoveredPairs.map(pairKey));
+  // Validate config pairs against live API data (warn but DO NOT skip)
   const activePairs = [];
+  const discoveredKeys = new Set(discoveredPairs.map(pairKey));
 
   for (const [key, pair] of merged) {
-    if (!discoveredKeys.has(key) && configPairs.some(cp => pairKey(cp) === key)) {
-      console.warn(`[WARN] Pair ${pair.asset_a} / ${pair.asset_b} not found in live universe — skipping`);
-      continue;
+    const isFromConfig = configPairs.some(cp => pairKey(cp) === key);
+
+    if (isFromConfig && !discoveredKeys.has(key) && liveAssets && liveAssets.size > 0) {
+      // Check if the individual assets exist
+      const matchA = pair.asset_a.match(HIP3_PATTERN);
+      const matchB = pair.asset_b.match(HIP3_PATTERN);
+      if (matchA && matchB) {
+        const deployerA = matchA[1];
+        const coinA = matchA[2];
+        const deployerB = matchB[1];
+        const coinB = matchB[2];
+        const aExists = liveAssets.has(deployerA) && liveAssets.get(deployerA).has(coinA);
+        const bExists = liveAssets.has(deployerB) && liveAssets.get(deployerB).has(coinB);
+
+        if (!aExists || !bExists) {
+          const missing = [];
+          if (!aExists) missing.push(pair.asset_a);
+          if (!bExists) missing.push(pair.asset_b);
+          console.warn(`[WARN] Pair ${pair.asset_a} / ${pair.asset_b} — asset(s) not found in live universe: ${missing.join(', ')} — skipping`);
+          continue;
+        }
+      }
     }
+
     activePairs.push(pair);
   }
 
@@ -149,20 +186,23 @@ async function discoverPairs(config) {
   const cachePath = path.resolve(config.discovered_pairs_cache || 'data/discovered_pairs.json');
 
   let discoveredPairs = [];
+  let liveAssets = null;
 
   try {
-    discoveredPairs = await discoverPairsFromAPI(infoUrl);
+    const result = await discoverPairsFromAPI(infoUrl);
+    discoveredPairs = result.pairs;
+    liveAssets = result.liveAssets;
   } catch (err) {
     console.error(`[WARN] REST API unreachable: ${err.message}`);
     const cached = loadCachedPairs(cachePath);
     if (cached) {
       return { pairs: cached, fromConfig: 0, fromDiscovery: cached.length };
     }
-    console.warn('[WARN] No cache available, using config pairs only');
+    console.warn('[WARN] No cache available, using config pairs only (unvalidated)');
     return { pairs: configPairs, fromConfig: configPairs.length, fromDiscovery: 0 };
   }
 
-  return mergePairs(configPairs, discoveredPairs, cachePath);
+  return mergePairs(configPairs, discoveredPairs, liveAssets, cachePath);
 }
 
 function groupPairsByUnderlying(pairs) {

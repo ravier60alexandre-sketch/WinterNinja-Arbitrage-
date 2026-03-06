@@ -1,20 +1,32 @@
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+
 export const dynamic = 'force-dynamic';
 
-let dbRef = null;
-let collectorRef = null;
+const DB_PATH = resolve(process.cwd(), '..', 'data', 'spreads.db');
+const LIVE_STATE_PATH = resolve(process.cwd(), '..', 'data', 'live-state.json');
+
+let db = null;
 
 function getDB() {
-  if (!dbRef) {
-    try { dbRef = require('../../../database'); } catch (e) {}
+  if (!db) {
+    try {
+      const Database = require('better-sqlite3');
+      db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
+      db.pragma('journal_mode = WAL');
+    } catch (e) {
+      return null;
+    }
   }
-  return dbRef;
+  return db;
 }
 
-function getCollector() {
-  if (!collectorRef) {
-    try { collectorRef = require('../../../collector'); } catch (e) {}
+function readLiveState() {
+  try {
+    return JSON.parse(readFileSync(LIVE_STATE_PATH, 'utf8'));
+  } catch (e) {
+    return null;
   }
-  return collectorRef;
 }
 
 export async function GET(request) {
@@ -26,18 +38,29 @@ export async function GET(request) {
     return Response.json({ error: 'pair_a and pair_b are required' }, { status: 400 });
   }
 
-  const db = getDB();
-  if (!db) {
+  const database = getDB();
+  if (!database) {
     return Response.json({ error: 'Database not ready' }, { status: 503 });
   }
 
-  const collector = getCollector();
-  const config = collector ? collector.getConfig() : {};
-  const fees = config.fee_assumptions || {};
-  const totalFeeBps = (fees.taker_fee_bps_per_leg || 1.5) * 2 + (fees.slippage_buffer_bps || 1.0);
+  const state = readLiveState();
+  const feeConfig = state && state.config && state.config.fee_assumptions || {};
+  const totalFeeBps = (feeConfig.taker_fee_bps_per_leg || 1.5) * 2 + (feeConfig.slippage_buffer_bps || 1.0);
 
   try {
-    const rawStats = db.getLatestStats(pairA, pairB);
+    const rawStats = database.prepare(`
+      SELECT rs.* FROM rolling_stats rs
+      INNER JOIN (
+        SELECT pair_a, pair_b, window, direction, MAX(timestamp) as max_ts
+        FROM rolling_stats
+        WHERE pair_a = ? AND pair_b = ?
+        GROUP BY window, direction
+      ) latest ON rs.pair_a = latest.pair_a
+        AND rs.pair_b = latest.pair_b
+        AND rs.window = latest.window
+        AND rs.direction = latest.direction
+        AND rs.timestamp = latest.max_ts
+    `).all(pairA, pairB);
 
     const stats = {};
     for (const row of rawStats) {
@@ -59,7 +82,6 @@ export async function GET(request) {
       };
     }
 
-    // Compute recommendation from 24h stats
     const recommendation = {};
     const stats24h = stats['24h'] || {};
     for (const dir of ['direction_1', 'direction_2']) {
@@ -73,9 +95,8 @@ export async function GET(request) {
       }
     }
 
-    // Find label from active pairs
-    const activePairs = collector ? collector.getActivePairs() : [];
-    const pair = activePairs.find(p => p.asset_a === pairA && p.asset_b === pairB);
+    const pairs = state && state.pairs || [];
+    const pair = pairs.find(p => p.asset_a === pairA && p.asset_b === pairB);
 
     return Response.json({
       pair_a: pairA,
