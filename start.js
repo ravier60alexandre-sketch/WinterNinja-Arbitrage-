@@ -53,7 +53,7 @@ async function main() {
   const port = config.dashboard_port || 3000;
 
   const nextBin = path.resolve(__dirname, 'node_modules', '.bin', 'next');
-  const dashboard = spawn(nextBin, ['dev', '-p', String(port)], {
+  const dashboard = spawn(nextBin, ['dev', '-H', '0.0.0.0', '-p', String(port)], {
     cwd: dashboardDir,
     stdio: 'pipe',
     env: {
