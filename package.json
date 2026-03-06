@@ -1,0 +1,26 @@
+{
+  "name": "hyperliquid-spread-analyzer",
+  "version": "1.0.0",
+  "description": "HiP-3 Executable Spread Analyzer for Hyperliquid",
+  "private": true,
+  "scripts": {
+    "start": "node start.js",
+    "collector": "node collector/index.js",
+    "dashboard": "next dev dashboard",
+    "build": "next build dashboard"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.4.3",
+    "concurrently": "^8.2.2",
+    "next": "^14.2.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.12.4",
+    "ws": "^8.17.0"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.3"
+  }
+}
