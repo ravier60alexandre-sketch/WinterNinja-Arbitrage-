@@ -62,7 +62,7 @@ export async function GET(request) {
   const pairs = state.pairs;
 
   try {
-    // Get latest rolling stats for requested window
+    // 1) Get latest rolling stats for requested window — single query for ALL pairs
     const rawStats = database.prepare(`
       SELECT rs.* FROM rolling_stats rs
       INNER JOIN (
@@ -77,45 +77,51 @@ export async function GET(request) {
         AND rs.timestamp = latest.max_ts
     `).all(windowParam);
 
-    // Get latest live observations for each pair
+    // 2) Get latest observation per pair — single query using a window function
+    const allLatestObs = database.prepare(`
+      SELECT pair_a, pair_b, spread_1_bps, spread_2_bps, exec_size_1, exec_size_2, timestamp
+      FROM spread_observations
+      WHERE id IN (
+        SELECT MAX(id) FROM spread_observations GROUP BY pair_a, pair_b
+      )
+    `).all();
+
     const latestObs = {};
-    for (const pair of pairs) {
-      const obs = database.prepare(`
-        SELECT spread_1_bps, spread_2_bps, exec_size_1, exec_size_2, timestamp
-        FROM spread_observations
-        WHERE pair_a = ? AND pair_b = ?
-        ORDER BY timestamp DESC LIMIT 1
-      `).get(pair.asset_a, pair.asset_b);
-      if (obs) {
-        latestObs[`${pair.asset_a}|${pair.asset_b}`] = obs;
-      }
+    for (const obs of allLatestObs) {
+      latestObs[`${obs.pair_a}|${obs.pair_b}`] = obs;
     }
 
-    // Compute MR metrics from raw data for each pair
+    // 3) Compute MR metrics — single bulk query for all pairs at once
     const now = Date.now();
     const windowMs = WINDOW_MS[windowParam] || WINDOW_MS['24h'];
     const sinceTs = now - windowMs;
 
-    const mrMetrics = {};
-    for (const pair of pairs) {
-      const rows = database.prepare(`
-        SELECT spread_1_bps, spread_2_bps FROM spread_observations
-        WHERE pair_a = ? AND pair_b = ? AND timestamp >= ?
-        ORDER BY timestamp ASC
-      `).all(pair.asset_a, pair.asset_b, sinceTs);
+    const allSpreadRows = database.prepare(`
+      SELECT pair_a, pair_b, spread_1_bps, spread_2_bps
+      FROM spread_observations
+      WHERE timestamp >= ?
+      ORDER BY pair_a, pair_b, timestamp ASC
+    `).all(sinceTs);
 
-      if (rows.length > 0) {
-        const d1 = rows.map(r => r.spread_1_bps);
-        const d2 = rows.map(r => r.spread_2_bps);
-        const key = `${pair.asset_a}|${pair.asset_b}`;
-        mrMetrics[key] = {
-          direction_1: computeMR(d1, totalFeeBps),
-          direction_2: computeMR(d2, totalFeeBps)
-        };
-      }
+    // Group by pair
+    const spreadsByPair = {};
+    for (const row of allSpreadRows) {
+      const key = `${row.pair_a}|${row.pair_b}`;
+      if (!spreadsByPair[key]) spreadsByPair[key] = { d1: [], d2: [] };
+      spreadsByPair[key].d1.push(row.spread_1_bps);
+      spreadsByPair[key].d2.push(row.spread_2_bps);
     }
 
-    // Build per-pair results
+    // Compute MR for each pair from grouped data
+    const mrMetrics = {};
+    for (const [key, spreads] of Object.entries(spreadsByPair)) {
+      mrMetrics[key] = {
+        direction_1: computeMR(spreads.d1, totalFeeBps),
+        direction_2: computeMR(spreads.d2, totalFeeBps)
+      };
+    }
+
+    // 4) Build per-pair results
     const statsMap = {};
     for (const row of rawStats) {
       const key = `${row.pair_a}|${row.pair_b}`;

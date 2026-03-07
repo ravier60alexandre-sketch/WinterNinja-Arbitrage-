@@ -32,10 +32,10 @@ export default function OverviewPage() {
     fetchData();
   }, [fetchData]);
 
-  // Auto-refresh every 5s
+  // Auto-refresh every 15s (lighter on DB than 5s)
   useEffect(() => {
     if (!autoRefresh) return;
-    const interval = setInterval(fetchData, 5000);
+    const interval = setInterval(fetchData, 15000);
     return () => clearInterval(interval);
   }, [autoRefresh, fetchData]);
 

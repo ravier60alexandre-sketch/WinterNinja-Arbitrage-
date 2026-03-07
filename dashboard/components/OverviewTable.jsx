@@ -98,11 +98,17 @@ export default function OverviewTable({ data, feeThreshold }) {
   const [sortCol, setSortCol] = useState('d1_edge');
   const [sortAsc, setSortAsc] = useState(false);
   const [filter, setFilter] = useState('');
+  const [hideEmpty, setHideEmpty] = useState(true);
 
   const rows = useMemo(() => {
     if (!data || !data.pairs) return [];
 
     let flattened = data.pairs.map(flattenRow);
+
+    // Hide pairs without data
+    if (hideEmpty) {
+      flattened = flattened.filter(r => r.d1_count !== null && r.d1_count > 0);
+    }
 
     // Text filter
     if (filter) {
@@ -195,15 +201,27 @@ export default function OverviewTable({ data, feeThreshold }) {
         </div>
       )}
 
-      {/* Filter + info */}
+      {/* Filter + controls */}
       <div className="flex items-center justify-between">
-        <input
-          type="text"
-          placeholder="Filter pairs..."
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          className="bg-bg-card border border-bg-border rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-accent-blue w-64"
-        />
+        <div className="flex items-center gap-3">
+          <input
+            type="text"
+            placeholder="Filter pairs..."
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="bg-bg-card border border-bg-border rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-accent-blue w-64"
+          />
+          <button
+            onClick={() => setHideEmpty(!hideEmpty)}
+            className={`px-2 py-1 text-[10px] rounded transition-colors ${
+              hideEmpty
+                ? 'bg-accent-amber/20 text-accent-amber border border-accent-amber/30'
+                : 'text-gray-500 border border-bg-border hover:text-gray-300'
+            }`}
+          >
+            {hideEmpty ? 'Active Only' : 'Show All'}
+          </button>
+        </div>
         <span className="text-xs text-gray-600">
           Click column headers to sort · Click pair name for details
         </span>
