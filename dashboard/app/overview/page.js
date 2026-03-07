@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import OverviewTable from '../../components/OverviewTable';
 
@@ -9,11 +9,53 @@ const WINDOWS = ['1h', '6h', '12h', '24h', '7d'];
 export default function OverviewPage() {
   const [window, setWindow] = useState('24h');
   const [data, setData] = useState(null);
+  const [liveSpreads, setLiveSpreads] = useState({});
+  const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState(null);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [lastLiveUpdate, setLastLiveUpdate] = useState(null);
+  const liveCountRef = useRef(0);
 
-  const fetchData = useCallback(() => {
+  // 1) SSE for live spreads — instant updates every 500ms
+  useEffect(() => {
+    const es = new EventSource('/api/spreads/live');
+
+    es.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.error) return;
+
+        setConnected(msg.connected || false);
+        setLastLiveUpdate(new Date());
+        liveCountRef.current++;
+
+        if (msg.spreads) {
+          const spreadMap = {};
+          for (const s of msg.spreads) {
+            spreadMap[`${s.pair_a}|${s.pair_b}`] = {
+              spread_1: s.spread_1_bps,
+              spread_2: s.spread_2_bps,
+              exec_1: s.exec_size_1,
+              exec_2: s.exec_size_2,
+              timestamp: s.timestamp || msg.timestamp
+            };
+          }
+          setLiveSpreads(spreadMap);
+        }
+      } catch (err) {
+        // Ignore parse errors
+      }
+    };
+
+    es.onerror = () => {
+      setConnected(false);
+    };
+
+    return () => es.close();
+  }, []);
+
+  // 2) Polling for rolling stats only — every 30s (stats change slowly)
+  const fetchStats = useCallback(() => {
     setLoading(true);
     fetch(`/api/stats/all?window=${window}`)
       .then(r => r.json())
@@ -27,17 +69,14 @@ export default function OverviewPage() {
       .catch(() => setLoading(false));
   }, [window]);
 
-  // Fetch on mount and window change
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchStats();
+  }, [fetchStats]);
 
-  // Auto-refresh every 15s (lighter on DB than 5s)
   useEffect(() => {
-    if (!autoRefresh) return;
-    const interval = setInterval(fetchData, 15000);
+    const interval = setInterval(fetchStats, 30000);
     return () => clearInterval(interval);
-  }, [autoRefresh, fetchData]);
+  }, [fetchStats]);
 
   // Keyboard shortcuts: 1-5 for windows
   useEffect(() => {
@@ -94,29 +133,30 @@ export default function OverviewPage() {
               ))}
             </div>
 
-            {/* Auto-refresh toggle */}
-            <button
-              onClick={() => setAutoRefresh(!autoRefresh)}
-              className={`px-2 py-1 text-xs rounded transition-colors ${
-                autoRefresh
-                  ? 'bg-accent-green/20 text-accent-green border border-accent-green/30'
-                  : 'text-gray-500 border border-bg-border hover:text-gray-300'
-              }`}
-            >
-              {autoRefresh ? 'LIVE' : 'PAUSED'}
-            </button>
+            {/* Connection status */}
+            <div className="flex items-center gap-1.5">
+              <span className={`w-2 h-2 rounded-full ${connected ? 'bg-accent-green animate-pulse' : 'bg-accent-red'}`} />
+              <span className="text-[10px] text-gray-500">
+                {connected ? 'LIVE' : 'DISCONNECTED'}
+              </span>
+            </div>
 
-            {/* Manual refresh */}
+            {/* Manual stats refresh */}
             <button
-              onClick={fetchData}
+              onClick={fetchStats}
               className="px-2 py-1 text-xs text-gray-500 hover:text-gray-300 border border-bg-border rounded transition-colors"
             >
-              Refresh
+              Refresh Stats
             </button>
 
             {/* Status */}
             <div className="text-[10px] text-gray-600 font-mono">
-              {lastRefresh && `${lastRefresh.toLocaleTimeString()}`}
+              {lastLiveUpdate && (
+                <span className="text-accent-green">Live {lastLiveUpdate.toLocaleTimeString()}</span>
+              )}
+              {lastRefresh && (
+                <span className="ml-2">Stats {lastRefresh.toLocaleTimeString()}</span>
+              )}
               {loading && <span className="ml-2 text-accent-amber">loading...</span>}
             </div>
           </div>
@@ -131,12 +171,12 @@ export default function OverviewPage() {
               All Pairs — Rolling Stats <span className="text-accent-blue font-mono">{window}</span>
             </h2>
             <p className="text-[10px] text-gray-600 mt-1">
-              Fees: {feeThreshold.toFixed(1)} bps round-trip · Each pair shows Direction 1 (A Short/B Long) and Direction 2 (A Long/B Short)
+              Fees: {feeThreshold.toFixed(1)} bps round-trip · Live spreads via SSE (real-time) · Stats refresh every 30s
             </p>
           </div>
         </div>
 
-        <OverviewTable data={data} feeThreshold={feeThreshold} />
+        <OverviewTable data={data} liveSpreads={liveSpreads} feeThreshold={feeThreshold} />
       </main>
 
       {/* Footer */}

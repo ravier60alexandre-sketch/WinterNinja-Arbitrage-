@@ -22,15 +22,19 @@ const COLUMNS = [
   { key: 'd1_count', label: 'Obs', align: 'right', sortable: true },
 ];
 
-function flattenRow(pair) {
+function flattenRow(pair, liveSpreads) {
   const d1 = pair.direction_1 || {};
   const d2 = pair.direction_2 || {};
+  // Use SSE live data (real-time) if available, fallback to API snapshot
+  const key = `${pair.pair_a}|${pair.pair_b}`;
+  const live = liveSpreads && liveSpreads[key];
+  const fallbackLive = pair.live;
   return {
     pair_a: pair.pair_a,
     pair_b: pair.pair_b,
     label: pair.label,
-    live_d1: pair.live ? pair.live.spread_1 : null,
-    live_d2: pair.live ? pair.live.spread_2 : null,
+    live_d1: live ? live.spread_1 : (fallbackLive ? fallbackLive.spread_1 : null),
+    live_d2: live ? live.spread_2 : (fallbackLive ? fallbackLive.spread_2 : null),
     d1_mean: d1.mean ?? null,
     d1_p50: d1.p50 ?? null,
     d2_mean: d2.mean ?? null,
@@ -94,7 +98,7 @@ function cellColorClass(col, val, feeThreshold) {
   return 'text-gray-300';
 }
 
-export default function OverviewTable({ data, feeThreshold }) {
+export default function OverviewTable({ data, liveSpreads, feeThreshold }) {
   const [sortCol, setSortCol] = useState('d1_edge');
   const [sortAsc, setSortAsc] = useState(false);
   const [filter, setFilter] = useState('');
@@ -103,7 +107,7 @@ export default function OverviewTable({ data, feeThreshold }) {
   const rows = useMemo(() => {
     if (!data || !data.pairs) return [];
 
-    let flattened = data.pairs.map(flattenRow);
+    let flattened = data.pairs.map(p => flattenRow(p, liveSpreads));
 
     // Hide pairs without data
     if (hideEmpty) {
@@ -133,7 +137,7 @@ export default function OverviewTable({ data, feeThreshold }) {
     }
 
     return flattened;
-  }, [data, sortCol, sortAsc, filter]);
+  }, [data, liveSpreads, sortCol, sortAsc, filter, hideEmpty]);
 
   const handleSort = (colKey) => {
     if (sortCol === colKey) {
