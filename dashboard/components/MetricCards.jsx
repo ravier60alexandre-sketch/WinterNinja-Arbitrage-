@@ -207,6 +207,21 @@ export default function MetricCards({ spreadData, stats, feeThreshold, bestOppor
           </div>
         </div>
       </div>
+
+      {/* Legend */}
+      <div className="bg-bg-card border border-bg-border rounded-xl p-3">
+        <p className="text-[10px] text-gray-600 uppercase tracking-wider font-semibold mb-1">Metrics Legend</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-0.5 text-[10px] text-gray-500">
+          <div><span className="text-gray-300 font-medium">Spread D1/D2</span> — Current spread in bps from live orderbook. <span className="text-accent-green">Green</span> = above fees, <span className="text-accent-red">red</span> = negative.</div>
+          <div><span className="text-gray-300 font-medium">Exec Size</span> — Max executable size (units) at best bid/ask before slippage.</div>
+          <div><span className="text-gray-300 font-medium">Amplitude (24h)</span> — P90 − P10 spread range over 24h. Measures opportunity width.</div>
+          <div><span className="text-gray-300 font-medium">Best Edge</span> — Highest edge frequency across all directions and strategies (DIR + MR).</div>
+          <div><span className="text-accent-green font-medium">DIR</span> — Directional: spread {'>'} fees, one-shot arb entry.</div>
+          <div><span className="text-purple-400 font-medium">MR SIGNAL</span> — Current spread is far enough from median for a mean-reversion trade.</div>
+          <div><span className="text-gray-300 font-medium">MR Short Above</span> — Spread level above which you short the spread (expecting reversion down to median).</div>
+          <div><span className="text-gray-300 font-medium">MR Long Below</span> — Spread level below which you long the spread (expecting reversion up to median).</div>
+        </div>
+      </div>
     </div>
   );
 }

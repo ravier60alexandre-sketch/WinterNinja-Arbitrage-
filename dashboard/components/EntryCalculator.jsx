@@ -112,6 +112,19 @@ export default function EntryCalculator({ stats, defaultFee, defaultSlippage }) 
           Collecting data for threshold calculations...
         </div>
       )}
+
+      {/* Legend */}
+      <div className="mt-4 pt-3 border-t border-bg-border/50">
+        <p className="text-[10px] text-gray-600 uppercase tracking-wider font-semibold mb-1">Calculator Legend</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-0.5 text-[10px] text-gray-500">
+          <div><span className="text-gray-300 font-medium">Taker Fee</span> — Fee per leg in bps. HiP-3 taker fee ~ 1.5 bps/leg.</div>
+          <div><span className="text-gray-300 font-medium">Slippage Buffer</span> — Extra margin (bps) for execution slippage.</div>
+          <div><span className="text-accent-amber font-medium">Round-Trip Cost</span> — Total cost = (taker fee x 2 legs) + slippage. Spread must exceed this to profit.</div>
+          <div><span className="text-accent-green font-medium">Aggressive</span> — Entry at P10 + fees. More trades, lower edge per trade.</div>
+          <div><span className="text-accent-blue font-medium">Standard</span> — Entry at P50 + fees. Balanced frequency vs edge.</div>
+          <div><span className="text-accent-amber font-medium">Conservative</span> — Entry at P90. Fewer trades, highest edge per trade.</div>
+        </div>
+      </div>
     </div>
   );
 }

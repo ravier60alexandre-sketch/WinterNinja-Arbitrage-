@@ -157,6 +157,16 @@ export default function DistributionChart({ historyData, feeThreshold, stats }) 
           </ResponsiveContainer>
         )}
       </div>
+
+      {/* Legend */}
+      <div className="mt-3 pt-2 border-t border-bg-border/50">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-0.5 text-[10px] text-gray-500">
+          <div><span className="text-gray-300 font-medium">X-axis</span> — Spread value in bps (bin center). Each bar = count of observations in that bin.</div>
+          <div><span className="text-[#f59e0b] font-medium">Fee line</span> — Round-trip fee threshold. Bars to the right are profitable spreads.</div>
+          <div><span className="text-[#00d4aa] font-medium">Dir 1 (cyan)</span> — A Short / B Long spread distribution.</div>
+          <div><span className="text-[#3b82f6] font-medium">Dir 2 (blue)</span> — A Long / B Short spread distribution.</div>
+        </div>
+      </div>
     </div>
   );
 }

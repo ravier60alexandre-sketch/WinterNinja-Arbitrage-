@@ -127,12 +127,20 @@ export default function StatsTable({ stats }) {
         </table>
       </div>
 
-      <div className="mt-3 pt-3 border-t border-bg-border/50">
-        <p className="text-[10px] text-gray-600">
-          <span className="text-accent-green">DIR Edge</span> = % spread {'>'} fees (arb directionnel) · {' '}
-          <span className="text-purple-400">MR Edge</span> = % |spread - median| {'>'} fees (mean reversion) · {' '}
-          <span className="text-purple-400">Amplitude</span> = P90 - P10
-        </p>
+      <div className="mt-3 pt-3 border-t border-bg-border/50 space-y-1">
+        <p className="text-[10px] text-gray-600 uppercase tracking-wider font-semibold">Column Legend</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-0.5 text-[10px] text-gray-500">
+          <div><span className="text-gray-300 font-medium">Window</span> — Rolling time period (1h, 6h, 12h, 24h, 7d).</div>
+          <div><span className="text-gray-300 font-medium">Mean</span> — Average spread (bps) over the window.</div>
+          <div><span className="text-gray-300 font-medium">Median</span> — 50th percentile spread (P50). The "typical" spread level.</div>
+          <div><span className="text-gray-300 font-medium">P10 / P90</span> — 10th and 90th percentiles. Defines the normal range of spread.</div>
+          <div><span className="text-gray-300 font-medium">Amplitude</span> — P90 − P10 range in bps. Larger = more spread volatility.</div>
+          <div><span className="text-gray-300 font-medium">StdDev</span> — Standard deviation of spreads in bps. Measures dispersion.</div>
+          <div><span className="text-accent-green font-medium">DIR Edge</span> — % of time spread {'>'} fees. Higher = more directional arb opportunities.</div>
+          <div><span className="text-purple-400 font-medium">MR Edge</span> — % of time |spread − median| {'>'} fees. Higher = more mean-reversion opps.</div>
+          <div><span className="text-gray-300 font-medium">Mean Rev</span> — Autocorrelation coefficient. Negative = mean-reverting, positive = trending.</div>
+          <div><span className="text-gray-300 font-medium">Count</span> — Number of spread observations in the window.</div>
+        </div>
       </div>
     </div>
   );

@@ -312,19 +312,33 @@ export default function OverviewTable({ data, liveSpreads, feeThreshold }) {
       </div>
 
       {/* Legend */}
-      <div className="flex items-center gap-4 text-[10px] text-gray-600">
-        <span className="flex items-center gap-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-accent-green inline-block" /> DIR Edge {'>'} 15%
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-purple-400 inline-block" /> MR Edge {'>'} 15%
-        </span>
-        <span>
-          <span className="text-accent-green">Green live</span> = spread {'>'} fees
-        </span>
-        <span>
-          <span className="text-purple-400">Purple cols</span> = mean reversion metrics
-        </span>
+      <div className="bg-bg-card border border-bg-border rounded-xl p-3 space-y-2">
+        <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mb-1">Column Legend</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-1 text-[10px] text-gray-500">
+          <div><span className="text-gray-300 font-medium">Pair</span> — Trading pair (Asset A vs Asset B). D1 = short A / long B, D2 = long A / short B.</div>
+          <div><span className="text-gray-300 font-medium">Live D1 / D2</span> — Current spread in bps, computed from the latest orderbook (updates on every book change).</div>
+          <div><span className="text-gray-300 font-medium">D1 Mean / D2 Mean</span> — Average spread over the selected rolling window.</div>
+          <div><span className="text-gray-300 font-medium">D1 P50 / D2 P50</span> — Median spread (50th percentile) over the rolling window.</div>
+          <div><span className="text-gray-300 font-medium">D1 Ampl. / D2 Ampl.</span> — Spread amplitude (max − min) in bps. Higher = more volatility = more opportunity.</div>
+          <div><span className="text-gray-300 font-medium">D1 DIR% / D2 DIR%</span> — Directional edge frequency: % of time the spread exceeds fees (profitable to enter).</div>
+          <div><span className="text-purple-400 font-medium">D1 MR% / D2 MR%</span> — Mean-reversion edge: % of time the spread is far enough from median for a MR trade.</div>
+          <div><span className="text-gray-300 font-medium">D1 Vol / D2 Vol</span> — Spread volatility (standard deviation in bps). Higher = more movement.</div>
+          <div><span className="text-gray-300 font-medium">Obs</span> — Number of observations recorded in the current rolling window.</div>
+        </div>
+        <div className="flex items-center gap-4 text-[10px] text-gray-500 pt-1 border-t border-bg-border/50">
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-accent-green inline-block" /> DIR Edge {'>'} 15%
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-purple-400 inline-block" /> MR Edge {'>'} 15%
+          </span>
+          <span>
+            <span className="text-accent-green">Green row</span> = live spread {'>'} fees (tradeable now)
+          </span>
+          <span>
+            <span className="text-accent-red">Red</span> = negative spread (inverted)
+          </span>
+        </div>
       </div>
     </div>
   );

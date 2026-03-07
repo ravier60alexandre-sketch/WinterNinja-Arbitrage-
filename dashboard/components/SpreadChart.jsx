@@ -285,6 +285,17 @@ export default function SpreadChart({
           </ResponsiveContainer>
         )}
       </div>
+
+      {/* Chart Legend */}
+      <div className="mt-3 pt-2 border-t border-bg-border/50">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-[10px] text-gray-500">
+          <div><span className="text-[#00d4aa] font-medium">D1 (cyan)</span> — Direction 1: short A / long B spread over time (bps).</div>
+          <div><span className="text-[#3b82f6] font-medium">D2 (blue)</span> — Direction 2: long A / short B spread over time (bps).</div>
+          <div><span className="text-[#f59e0b] font-medium">Fee line (dashed)</span> — Round-trip fee threshold. Spread above this line = profitable trade.</div>
+          <div><span className="text-purple-400 font-medium">MR zones (purple dashed)</span> — Mean-reversion entry zones: spread far enough from median to enter a MR trade.</div>
+          <div><span className="text-[#00d4aa] font-medium">D1 Med / <span className="text-[#3b82f6]">D2 Med</span></span> — Median (P50) spread for each direction over the selected window.</div>
+        </div>
+      </div>
     </div>
   );
 }
