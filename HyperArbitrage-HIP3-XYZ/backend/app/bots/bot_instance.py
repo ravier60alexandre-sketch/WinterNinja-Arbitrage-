@@ -1,4 +1,5 @@
 import asyncio
+import time
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -9,8 +10,9 @@ from app.bots.one_leg_guard import FillEvent, OneLegGuard
 from app.bots.order_executor import OrderExecutor
 from app.bots.position_manager import PositionManager
 from app.bots.spread_calculator import SpreadCalculator
-from app.core.exceptions import InsufficientEdgeError
+from app.core.exceptions import FundingBlockedError, InsufficientEdgeError
 from app.core.logging import get_logger
+from app.services.orderbook_service import OrderbookService
 
 logger = get_logger("bots.bot_instance")
 
@@ -34,6 +36,7 @@ class BotInstance(BaseBot):
         self.direction = direction
         self.account_address = account_address
         self._exchange = exchange
+        self._hl_info = hl_info
         self._config = config
 
         self.spread_calculator = SpreadCalculator(bot_id)
@@ -42,10 +45,13 @@ class BotInstance(BaseBot):
         self.one_leg_guard = OneLegGuard(bot_id, config.get("one_leg_timeout_ms", 500), exchange)
         self.funding_monitor = FundingMonitor(bot_id, hl_info, config.get("funding_threshold", 0.5))
         self.position_manager = PositionManager(bot_id, exchange, config.get("exit_mode", "on_profit"))
+        self.orderbook_service = OrderbookService()
 
         self._stop_event = asyncio.Event()
         self._fill_queue: asyncio.Queue = asyncio.Queue(maxlen=100)
         self._tasks: list[asyncio.Task] = []
+        self._has_open_position = False
+        self._open_trade: dict | None = None
 
     async def start(self) -> None:
         await self.transition(BotState.CONNECTING, "user_start")
@@ -103,7 +109,186 @@ class BotInstance(BaseBot):
                 await asyncio.sleep(1.0)
 
     async def _tick(self) -> None:
-        pass
+        tick_start = time.perf_counter_ns()
+
+        book_a = self.orderbook_service.get(self.pair_a)
+        book_b = self.orderbook_service.get(self.pair_b)
+        if book_a is None or book_b is None:
+            return
+
+        mid_a = book_a.mid_price
+        mid_b = book_b.mid_price
+        if mid_a is None or mid_b is None:
+            return
+
+        sample = self.spread_calculator.add_sample(mid_a, mid_b)
+
+        timeframe_key = f"{self._config.get('timeframe_hours', 6)}h"
+        if timeframe_key not in ("1h", "6h", "12h", "24h"):
+            timeframe_key = "24h"
+        percentiles = self.spread_calculator.compute_percentiles(timeframe_key)
+
+        target_pct_key = self._config.get("percentile", 0.75)
+        pct_map = {0.5: "p50", 0.75: "p75", 0.8: "p80", 0.95: "p95"}
+        target_percentile = percentiles.get(pct_map.get(target_pct_key, "p75"))
+        if target_percentile is None:
+            return
+
+        fees_roundtrip = await self.fee_calculator.get_fees_roundtrip(self.pair_a, self.pair_b)
+
+        max_slippage_ticks = self._config.get("max_slippage_ticks", 2)
+        tick_a = self.order_executor._tick_sizes.get(self.pair_a, Decimal("0.01"))
+        slippage_margin = tick_a * max_slippage_ticks * 2
+
+        edge = self.spread_calculator.compute_edge(
+            sample.spread, target_percentile, fees_roundtrip, slippage_margin
+        )
+
+        min_edge_bps = Decimal(str(self._config.get("min_edge_bps", 2)))
+
+        if self._has_open_position and self._open_trade is not None:
+            await self._check_exit(mid_a, mid_b, fees_roundtrip, slippage_margin, edge)
+        else:
+            await self._check_entry(
+                mid_a, mid_b, edge, min_edge_bps,
+                fees_roundtrip, slippage_margin, max_slippage_ticks, sample
+            )
+
+        if self.spread_calculator.should_flush():
+            self.spread_calculator.flush_batch()
+
+        elapsed_ms = (time.perf_counter_ns() - tick_start) / 1_000_000
+        if elapsed_ms > 50:
+            logger.warning("slow_tick", bot_id=self.bot_id, elapsed_ms=round(elapsed_ms, 2))
+
+    async def _check_entry(
+        self,
+        mid_a: Decimal,
+        mid_b: Decimal,
+        edge: Decimal,
+        min_edge_bps: Decimal,
+        fees_roundtrip: Decimal,
+        slippage_margin: Decimal,
+        max_slippage_ticks: int,
+        sample,
+    ) -> None:
+        if edge < min_edge_bps:
+            return
+
+        if self.funding_monitor.is_blocked:
+            logger.debug("entry_blocked_funding", bot_id=self.bot_id)
+            return
+
+        max_position = self._config.get("max_position_size")
+        size = Decimal(str(max_position)) if max_position else Decimal("1")
+
+        if self.direction == "long_a_short_b":
+            side_a, side_b = "buy", "sell"
+        else:
+            side_a, side_b = "sell", "buy"
+
+        logger.info(
+            "entry_signal",
+            bot_id=self.bot_id,
+            edge=str(edge),
+            spread=str(sample.spread),
+            pair_a=self.pair_a,
+            pair_b=self.pair_b,
+        )
+
+        result_a, result_b = await self.order_executor.execute_pair(
+            asset_a=self.pair_a, side_a=side_a, size_a=size, mid_a=mid_a,
+            asset_b=self.pair_b, side_b=side_b, size_b=size, mid_b=mid_b,
+            max_slippage_ticks=max_slippage_ticks,
+        )
+
+        if self._config.get("one_leg_protection", True):
+            success, status = await self.one_leg_guard.monitor_fills(
+                result_a.order_id, result_b.order_id, self._fill_queue,
+            )
+            if not success:
+                logger.warning("entry_one_leg", bot_id=self.bot_id, status=status)
+                return
+
+        if not result_a.filled or not result_b.filled:
+            logger.warning("entry_not_filled", bot_id=self.bot_id)
+            return
+
+        self._has_open_position = True
+        self._open_trade = {
+            "entry_time": datetime.now(UTC),
+            "entry_price_a": result_a.price,
+            "entry_price_b": result_b.price,
+            "size": size,
+            "side_a": side_a,
+            "side_b": side_b,
+            "entry_spread": sample.spread,
+            "edge_at_entry": edge,
+            "slippage_a": result_a.slippage,
+            "slippage_b": result_b.slippage,
+            "fees_entry": fees_roundtrip / 2,
+        }
+
+        logger.info(
+            "trade_opened",
+            bot_id=self.bot_id,
+            entry_a=str(result_a.price),
+            entry_b=str(result_b.price),
+            size=str(size),
+            edge=str(edge),
+        )
+
+    async def _check_exit(
+        self,
+        mid_a: Decimal,
+        mid_b: Decimal,
+        fees_roundtrip: Decimal,
+        slippage_margin: Decimal,
+        current_edge: Decimal,
+    ) -> None:
+        trade = self._open_trade
+        if trade is None:
+            return
+
+        net_pnl = self.position_manager.compute_net_pnl(
+            entry_price_a=trade["entry_price_a"],
+            entry_price_b=trade["entry_price_b"],
+            exit_price_a=mid_a,
+            exit_price_b=mid_b,
+            size=trade["size"],
+            fees_paid=fees_roundtrip,
+            funding_paid=Decimal("0"),
+            direction=self.direction,
+        )
+
+        reverse_signal = current_edge < Decimal("0")
+        should_exit = self.position_manager.should_exit(
+            net_pnl, fees_roundtrip, slippage_margin, reverse_signal
+        )
+
+        if not should_exit:
+            return
+
+        exit_side_a = "sell" if trade["side_a"] == "buy" else "buy"
+        exit_side_b = "sell" if trade["side_b"] == "buy" else "buy"
+
+        closed = await self.position_manager.close_position(
+            asset_a=self.pair_a, side_a=exit_side_a, size_a=trade["size"],
+            asset_b=self.pair_b, side_b=exit_side_b, size_b=trade["size"],
+        )
+
+        close_reason = "on_profit" if not reverse_signal else "on_reverse"
+
+        logger.info(
+            "trade_closed",
+            bot_id=self.bot_id,
+            net_pnl=str(net_pnl),
+            close_reason=close_reason,
+            closed=closed,
+        )
+
+        self._has_open_position = False
+        self._open_trade = None
 
     def update_config(self, config: dict) -> None:
         self._config.update(config)

@@ -1,3 +1,4 @@
+import time
 from decimal import ROUND_HALF_UP, Decimal
 
 from app.core.logging import get_logger
@@ -77,7 +78,6 @@ class OrderbookService:
                 for level in levels[1]
             ]
 
-        import time
         book.last_update = time.time()
         return book
 

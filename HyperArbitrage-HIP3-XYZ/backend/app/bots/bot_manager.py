@@ -5,11 +5,36 @@ from sqlalchemy import select
 
 from app.bots.base_bot import BotState
 from app.bots.bot_instance import BotInstance
+from app.config import settings
 from app.core.logging import get_logger
 from app.core.security import decrypt_api_key
 from app.models.bot import Bot, BotConfig
 
 logger = get_logger("bots.bot_manager")
+
+
+def _create_hl_exchange(api_key_decrypted: str, is_mainnet: bool):
+    """Create a Hyperliquid Exchange instance for a bot."""
+    try:
+        from hyperliquid.exchange import Exchange
+        from hyperliquid.utils import constants
+        base_url = constants.MAINNET_API_URL if is_mainnet else constants.TESTNET_API_URL
+        return Exchange(wallet=api_key_decrypted, base_url=base_url)
+    except ImportError:
+        logger.warning("hyperliquid_sdk_not_available", msg="Using None exchange — install hyperliquid-python-sdk")
+        return None
+
+
+def _create_hl_info(is_mainnet: bool):
+    """Create a Hyperliquid Info instance for reading market data."""
+    try:
+        from hyperliquid.info import Info
+        from hyperliquid.utils import constants
+        base_url = constants.MAINNET_API_URL if is_mainnet else constants.TESTNET_API_URL
+        return Info(base_url=base_url)
+    except ImportError:
+        logger.warning("hyperliquid_sdk_not_available", msg="Using None info — install hyperliquid-python-sdk")
+        return None
 
 
 class BotManager:
@@ -47,6 +72,11 @@ class BotManager:
                     "min_edge_bps": config_model.min_edge_bps,
                 }
 
+            is_mainnet = settings.HL_MAINNET
+            api_key_decrypted = decrypt_api_key(bot_model.api_key_encrypted)
+            exchange = _create_hl_exchange(api_key_decrypted, is_mainnet)
+            hl_info = _create_hl_info(is_mainnet)
+
             instance = BotInstance(
                 bot_id=bot_model.id,
                 name=bot_model.name,
@@ -54,8 +84,8 @@ class BotManager:
                 pair_b=bot_model.pair_b,
                 direction=bot_model.direction,
                 account_address=bot_model.account_address,
-                exchange=None,
-                hl_info=None,
+                exchange=exchange,
+                hl_info=hl_info,
                 config=config,
             )
 
