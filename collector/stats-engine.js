@@ -65,26 +65,41 @@ function computeStatsForWindow(values, totalFeeBps) {
       max_spread_bps: null,
       min_spread_bps: null,
       edge_frequency: null,
-      mean_reversion_score: null
+      mean_reversion_score: null,
+      mr_edge_frequency: null,
+      amplitude_bps: null
     };
   }
 
   const sorted = [...values].sort((a, b) => a - b);
   const avg = mean(values);
+  const med = percentile(sorted, 0.50);
 
+  // Classic edge: spread > fees (directional arbitrage)
   const edgeCount = values.filter(v => v > totalFeeBps).length;
+
+  // Mean reversion edge: deviation from median > fees (both directions)
+  // If spread deviates from its median by more than the fee cost, that's a MR opportunity
+  const mrEdgeCount = values.filter(v => Math.abs(v - med) > totalFeeBps).length;
+
+  // Amplitude: P90 - P10 range (tradeable range)
+  const p10 = percentile(sorted, 0.10);
+  const p90 = percentile(sorted, 0.90);
+  const amplitude = p90 !== null && p10 !== null ? p90 - p10 : null;
 
   return {
     count: values.length,
     mean_spread_bps: Math.round(avg * 100) / 100,
-    median_spread_bps: Math.round(percentile(sorted, 0.50) * 100) / 100,
-    p10_spread_bps: Math.round(percentile(sorted, 0.10) * 100) / 100,
-    p90_spread_bps: Math.round(percentile(sorted, 0.90) * 100) / 100,
+    median_spread_bps: Math.round(med * 100) / 100,
+    p10_spread_bps: Math.round(p10 * 100) / 100,
+    p90_spread_bps: Math.round(p90 * 100) / 100,
     stddev_spread_bps: Math.round(stddev(values, avg) * 100) / 100,
     max_spread_bps: Math.round(Math.max(...values) * 100) / 100,
     min_spread_bps: Math.round(Math.min(...values) * 100) / 100,
     edge_frequency: Math.round((edgeCount / values.length) * 1000) / 1000,
-    mean_reversion_score: Math.round((autocorrelationLag1(values) || 0) * 1000) / 1000
+    mean_reversion_score: Math.round((autocorrelationLag1(values) || 0) * 1000) / 1000,
+    mr_edge_frequency: Math.round((mrEdgeCount / values.length) * 1000) / 1000,
+    amplitude_bps: amplitude !== null ? Math.round(amplitude * 100) / 100 : null
   };
 }
 

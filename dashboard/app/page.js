@@ -17,6 +17,7 @@ export default function DashboardPage() {
   const [liveSpreads, setLiveSpreads] = useState({});
   const [historyData, setHistoryData] = useState([]);
   const [stats, setStats] = useState(null);
+  const [bestOpportunity, setBestOpportunity] = useState(null);
   const [selectedWindow, setSelectedWindow] = useState('1h');
   const [compareMode, setCompareMode] = useState(false);
   const [comparePairs, setComparePairs] = useState([]);
@@ -104,6 +105,7 @@ export default function DashboardPage() {
         .then(r => r.json())
         .then(data => {
           if (data.stats) setStats(data.stats);
+          if (data.best_opportunity) setBestOpportunity(data.best_opportunity);
         })
         .catch(() => {});
     };
@@ -223,6 +225,7 @@ export default function DashboardPage() {
           spreadData={currentSpread}
           stats={stats}
           feeThreshold={feeThreshold}
+          bestOpportunity={bestOpportunity}
         />
 
         {/* Spread Chart */}
@@ -234,6 +237,7 @@ export default function DashboardPage() {
           compareMode={compareMode}
           comparePairs={comparePairs}
           compareData={compareData}
+          stats={stats}
         />
 
         {/* Distribution + Stats side by side */}

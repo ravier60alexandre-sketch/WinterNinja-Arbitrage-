@@ -45,11 +45,11 @@ export default function SpreadChart({
   onWindowChange,
   compareMode,
   comparePairs,
-  compareData
+  compareData,
+  stats
 }) {
   const chartData = useMemo(() => {
     if (compareMode && compareData) {
-      // Multi-pair overlay mode
       const timeMap = new Map();
       for (const [pairKey, data] of Object.entries(compareData)) {
         for (const row of (data || [])) {
@@ -72,6 +72,25 @@ export default function SpreadChart({
     }));
   }, [historyData, compareMode, compareData]);
 
+  // Get MR entry zones from stats
+  const mrZones = useMemo(() => {
+    if (!stats) return null;
+    // Use the matching window stats, fallback to 24h
+    const windowStats = stats[selectedWindow] || stats['24h'];
+    if (!windowStats) return null;
+
+    const d1 = windowStats.direction_1;
+    const d2 = windowStats.direction_2;
+    return {
+      d1_median: d1 ? d1.p50 : null,
+      d1_above: d1 ? d1.mr_entry_above : null,
+      d1_below: d1 ? d1.mr_entry_below : null,
+      d2_median: d2 ? d2.p50 : null,
+      d2_above: d2 ? d2.mr_entry_above : null,
+      d2_below: d2 ? d2.mr_entry_below : null
+    };
+  }, [stats, selectedWindow]);
+
   const handleExportCSV = useCallback(() => {
     if (!chartData.length) return;
     const headers = Object.keys(chartData[0]).join(',');
@@ -86,12 +105,28 @@ export default function SpreadChart({
     URL.revokeObjectURL(url);
   }, [chartData, selectedWindow]);
 
+  const [showMRZones, setShowMRZones] = useState(true);
+
   return (
     <div className="bg-bg-card border border-bg-border rounded-xl p-4">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-semibold text-gray-300">
-          {compareMode ? 'Multi-Pair Spread Comparison' : 'Real-Time Spread'}
-        </h3>
+        <div className="flex items-center gap-3">
+          <h3 className="text-sm font-semibold text-gray-300">
+            {compareMode ? 'Multi-Pair Spread Comparison' : 'Real-Time Spread'}
+          </h3>
+          {!compareMode && (
+            <button
+              onClick={() => setShowMRZones(!showMRZones)}
+              className={`px-2 py-0.5 text-[10px] rounded transition-colors ${
+                showMRZones
+                  ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                  : 'text-gray-500 border border-bg-border hover:text-gray-300'
+              }`}
+            >
+              MR Zones
+            </button>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <div className="flex bg-bg-primary rounded-lg p-0.5">
             {TIME_WINDOWS.map(w => (
@@ -145,6 +180,8 @@ export default function SpreadChart({
               <Legend
                 wrapperStyle={{ fontSize: '11px', color: '#9ca3af' }}
               />
+
+              {/* Fee threshold line */}
               <ReferenceLine
                 y={feeThreshold}
                 stroke="#f59e0b"
@@ -152,6 +189,60 @@ export default function SpreadChart({
                 label={{ value: `Fee: ${feeThreshold} bps`, position: 'right', fill: '#f59e0b', fontSize: 10 }}
               />
               <ReferenceLine y={0} stroke="#4a4a5a" />
+
+              {/* MR zones for Direction 1 */}
+              {!compareMode && showMRZones && mrZones && mrZones.d1_median !== null && (
+                <>
+                  <ReferenceLine
+                    y={mrZones.d1_median}
+                    stroke="#00d4aa"
+                    strokeDasharray="3 3"
+                    strokeOpacity={0.5}
+                    label={{ value: `D1 Med: ${mrZones.d1_median}`, position: 'insideTopLeft', fill: '#00d4aa', fontSize: 9 }}
+                  />
+                  <ReferenceLine
+                    y={mrZones.d1_above}
+                    stroke="#a855f7"
+                    strokeDasharray="4 4"
+                    strokeOpacity={0.6}
+                    label={{ value: `D1 MR↑: ${mrZones.d1_above}`, position: 'insideTopLeft', fill: '#a855f7', fontSize: 9 }}
+                  />
+                  <ReferenceLine
+                    y={mrZones.d1_below}
+                    stroke="#a855f7"
+                    strokeDasharray="4 4"
+                    strokeOpacity={0.6}
+                    label={{ value: `D1 MR↓: ${mrZones.d1_below}`, position: 'insideBottomLeft', fill: '#a855f7', fontSize: 9 }}
+                  />
+                </>
+              )}
+
+              {/* MR zones for Direction 2 */}
+              {!compareMode && showMRZones && mrZones && mrZones.d2_median !== null && (
+                <>
+                  <ReferenceLine
+                    y={mrZones.d2_median}
+                    stroke="#3b82f6"
+                    strokeDasharray="3 3"
+                    strokeOpacity={0.5}
+                    label={{ value: `D2 Med: ${mrZones.d2_median}`, position: 'insideBottomRight', fill: '#3b82f6', fontSize: 9 }}
+                  />
+                  <ReferenceLine
+                    y={mrZones.d2_above}
+                    stroke="#a855f7"
+                    strokeDasharray="4 4"
+                    strokeOpacity={0.4}
+                    label={{ value: `D2 MR↑: ${mrZones.d2_above}`, position: 'insideTopRight', fill: '#a855f7', fontSize: 9 }}
+                  />
+                  <ReferenceLine
+                    y={mrZones.d2_below}
+                    stroke="#a855f7"
+                    strokeDasharray="4 4"
+                    strokeOpacity={0.4}
+                    label={{ value: `D2 MR↓: ${mrZones.d2_below}`, position: 'insideBottomRight', fill: '#a855f7', fontSize: 9 }}
+                  />
+                </>
+              )}
 
               {compareMode && comparePairs ? (
                 comparePairs.map((pair, i) => {
@@ -175,7 +266,7 @@ export default function SpreadChart({
                   <Line
                     type="monotone"
                     dataKey="spread_1"
-                    name="XYZ Short / B Long"
+                    name="A Short / B Long"
                     stroke="#00d4aa"
                     dot={false}
                     strokeWidth={1.5}
@@ -183,7 +274,7 @@ export default function SpreadChart({
                   <Line
                     type="monotone"
                     dataKey="spread_2"
-                    name="XYZ Long / B Short"
+                    name="A Long / B Short"
                     stroke="#3b82f6"
                     dot={false}
                     strokeWidth={1.5}

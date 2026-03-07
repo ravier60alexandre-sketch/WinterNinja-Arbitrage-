@@ -8,15 +8,17 @@ const COLUMNS = [
   { key: 'p50', label: 'Median' },
   { key: 'p10', label: 'P10' },
   { key: 'p90', label: 'P90' },
+  { key: 'amplitude', label: 'Amplitude' },
   { key: 'stddev', label: 'StdDev' },
-  { key: 'edge_freq', label: 'Edge Freq' },
+  { key: 'edge_freq', label: 'DIR Edge' },
+  { key: 'mr_edge_freq', label: 'MR Edge' },
   { key: 'mean_reversion', label: 'Mean Rev' },
   { key: 'count', label: 'Count' }
 ];
 
 function formatVal(key, val) {
   if (val === null || val === undefined) return '—';
-  if (key === 'edge_freq') return `${(val * 100).toFixed(1)}%`;
+  if (key === 'edge_freq' || key === 'mr_edge_freq') return `${(val * 100).toFixed(1)}%`;
   if (key === 'count') return val.toLocaleString();
   return val.toFixed(2);
 }
@@ -25,6 +27,9 @@ function cellColor(key, val) {
   if (val === null || val === undefined) return '';
   if (key === 'edge_freq' && val > 0.20) return 'text-accent-green';
   if (key === 'edge_freq' && val < 0.05) return 'text-accent-red';
+  if (key === 'mr_edge_freq' && val > 0.20) return 'text-purple-400';
+  if (key === 'mr_edge_freq' && val < 0.05) return 'text-accent-red';
+  if (key === 'amplitude' && val > 8) return 'text-purple-400';
   if (key === 'mean_reversion' && val > 0) return 'text-accent-red';
   if (key === 'mean_reversion' && val < -0.2) return 'text-accent-green';
   return '';
@@ -70,7 +75,7 @@ export default function StatsTable({ stats }) {
               activeDir === 1 ? 'bg-accent-green/20 text-accent-green' : 'text-gray-500 hover:text-gray-300'
             }`}
           >
-            XYZ Short / B Long
+            A Short / B Long
           </button>
           <button
             onClick={() => setActiveDir(2)}
@@ -78,7 +83,7 @@ export default function StatsTable({ stats }) {
               activeDir === 2 ? 'bg-accent-blue/20 text-accent-blue' : 'text-gray-500 hover:text-gray-300'
             }`}
           >
-            XYZ Long / B Short
+            A Long / B Short
           </button>
         </div>
       </div>
@@ -120,6 +125,14 @@ export default function StatsTable({ stats }) {
             ))}
           </tbody>
         </table>
+      </div>
+
+      <div className="mt-3 pt-3 border-t border-bg-border/50">
+        <p className="text-[10px] text-gray-600">
+          <span className="text-accent-green">DIR Edge</span> = % spread {'>'} fees (arb directionnel) · {' '}
+          <span className="text-purple-400">MR Edge</span> = % |spread - median| {'>'} fees (mean reversion) · {' '}
+          <span className="text-purple-400">Amplitude</span> = P90 - P10
+        </p>
       </div>
     </div>
   );
