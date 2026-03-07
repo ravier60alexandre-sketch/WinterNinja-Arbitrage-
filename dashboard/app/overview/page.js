@@ -111,6 +111,12 @@ export default function OverviewPage() {
               <span className="px-3 py-1 text-xs bg-accent-blue/20 text-accent-blue border border-accent-blue/30 rounded-md">
                 Overview
               </span>
+              <Link
+                href="/bots"
+                className="px-3 py-1 text-xs text-gray-500 hover:text-gray-300 border border-bg-border rounded-md transition-colors"
+              >
+                Bots
+              </Link>
             </div>
           </div>
 
