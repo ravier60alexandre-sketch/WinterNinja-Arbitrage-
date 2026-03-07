@@ -1,4 +1,4 @@
-import { readFileSync } from 'fs';
+import { readFileSync, watch } from 'fs';
 import { resolve } from 'path';
 
 export const dynamic = 'force-dynamic';
@@ -20,6 +20,8 @@ export async function GET(request) {
 
   const stream = new ReadableStream({
     start(controller) {
+      let lastTimestamp = 0;
+
       const sendEvent = () => {
         try {
           const state = readLiveState();
@@ -27,6 +29,10 @@ export async function GET(request) {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: 'Collector not ready', connected: false, timestamp: Date.now(), spreads: [] })}\n\n`));
             return;
           }
+
+          // Only send if data actually changed
+          if (state.timestamp && state.timestamp === lastTimestamp) return;
+          lastTimestamp = state.timestamp || 0;
 
           const payload = {
             connected: state.connected || false,
@@ -40,11 +46,28 @@ export async function GET(request) {
         }
       };
 
+      // Send initial state immediately
       sendEvent();
-      const interval = setInterval(sendEvent, 500);
+
+      // Watch for file changes — triggers when collector writes new data
+      let watcher;
+      try {
+        watcher = watch(LIVE_STATE_PATH, { persistent: false }, (eventType) => {
+          if (eventType === 'change') {
+            sendEvent();
+          }
+        });
+      } catch (e) {
+        // fs.watch not available on this platform, fall back to polling
+      }
+
+      // Fallback: poll every 200ms in case fs.watch misses events
+      // (some filesystems batch events or drop them under load)
+      const fallbackInterval = setInterval(sendEvent, 200);
 
       request.signal.addEventListener('abort', () => {
-        clearInterval(interval);
+        clearInterval(fallbackInterval);
+        if (watcher) watcher.close();
         try { controller.close(); } catch (e) {}
       });
     }

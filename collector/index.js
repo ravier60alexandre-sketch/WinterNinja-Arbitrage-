@@ -22,6 +22,9 @@ const latestSpreads = new Map();
 // Path for live state file (shared with Next.js dashboard process)
 let liveStatePath = null;
 
+// Dirty flag: write live state only when data actually changed
+let liveStateDirty = false;
+
 function writeLiveState() {
   if (!liveStatePath) return;
 
@@ -45,6 +48,13 @@ function writeLiveState() {
     fs.writeFileSync(liveStatePath, JSON.stringify(state));
   } catch (err) {
     // Non-fatal — dashboard will retry
+  }
+  liveStateDirty = false;
+}
+
+function writeLiveStateIfDirty() {
+  if (liveStateDirty) {
+    writeLiveState();
   }
 }
 
@@ -70,25 +80,29 @@ function onBookUpdate(msg) {
     const pairKey = `${pair.asset_a}|${pair.asset_b}`;
     const lastTime = lastObservationTime.get(pairKey) || 0;
 
-    if (now - lastTime < throttleMs) continue;
-
+    // Always update in-memory state for live display (no throttle)
     const spread = computeSpread(bookA, bookB, minExecSize);
     if (!spread) continue;
 
+    latestSpreads.set(pairKey, {
+      timestamp: now,
+      pair_a: pair.asset_a,
+      pair_b: pair.asset_b,
+      ...spread,
+      label: pair.label
+    });
+    liveStateDirty = true;
+
+    // Throttle only DB writes (not live display)
+    if (now - lastTime < throttleMs) continue;
+
     lastObservationTime.set(pairKey, now);
 
-    const observation = {
+    db.insertObservation({
       timestamp: now,
       pair_a: pair.asset_a,
       pair_b: pair.asset_b,
       ...spread
-    };
-
-    db.insertObservation(observation);
-
-    latestSpreads.set(pairKey, {
-      ...observation,
-      label: pair.label
     });
   }
 }
@@ -140,8 +154,8 @@ async function start(cfg) {
 
   console.log(`[COLLECTOR] Subscribed to ${coins.size} coins for ${activePairs.length} pairs`);
 
-  // Write live state every 500ms for the dashboard
-  liveStateInterval = setInterval(writeLiveState, 500);
+  // Write live state every 100ms but only when data changed (event-driven)
+  liveStateInterval = setInterval(writeLiveStateIfDirty, 100);
 
   // Start stats engine
   const statsIntervalMs = config.stats_update_interval_ms || 5000;

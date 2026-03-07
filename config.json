@@ -36,7 +36,7 @@
   },
   "rolling_windows": ["1h", "6h", "12h", "24h", "7d"],
   "stats_update_interval_ms": 5000,
-  "observation_throttle_ms": 500,
+  "observation_throttle_ms": 200,
   "database_path": "data/spreads.db",
   "discovered_pairs_cache": "data/discovered_pairs.json",
   "websocket_url": "wss://api.hyperliquid.xyz/ws",
