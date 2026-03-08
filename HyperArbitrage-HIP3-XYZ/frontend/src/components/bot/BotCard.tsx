@@ -208,14 +208,12 @@ export default function BotCard({ bot }: BotCardProps) {
             </div>
 
             {/* Link to detail */}
-            {bot.state === "RUNNING" && (
-              <Link
-                href={`/dashboard/${bot.id}`}
-                className="block text-center text-[10px] text-accent-indigo hover:text-accent-indigo/80 transition-colors pt-1"
-              >
-                View Details &rarr;
-              </Link>
-            )}
+            <Link
+              href={`/dashboard/${bot.id}`}
+              className="block text-center text-[10px] text-accent-indigo hover:text-accent-indigo/80 transition-colors pt-1"
+            >
+              View Details &rarr;
+            </Link>
           </>
         )}
       </div>

@@ -10,19 +10,36 @@ interface BotConfigProps {
   config: BotConfigType | null;
 }
 
+const DEFAULT_CONFIG: BotConfigType = {
+  percentile: 0.75,
+  timeframe_hours: 6,
+  profit_margin_bps: 5,
+  max_slippage_ticks: 2,
+  max_position_size: null,
+  funding_rate_threshold: 0.5,
+  one_leg_protection: true,
+  exit_mode: "on_profit",
+  min_edge_bps: 3,
+};
+
 export default function BotConfig({ botId, config }: BotConfigProps) {
-  const { mutate, isPending } = useBotConfigUpdate(botId);
-  const [local, setLocal] = useState<Partial<BotConfigType>>(config || {});
+  const { mutate, isPending, error } = useBotConfigUpdate(botId);
+  const effectiveConfig = config || DEFAULT_CONFIG;
+  const [local, setLocal] = useState<Partial<BotConfigType>>(effectiveConfig);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (config) setLocal(config);
   }, [config]);
 
   const handleSave = () => {
-    mutate(local);
+    setSaveError(null);
+    mutate(local, {
+      onError: (err: any) => {
+        setSaveError(err.message || "Failed to save. Backend may be offline.");
+      },
+    });
   };
-
-  if (!config) return <div className="text-text-secondary text-sm">No config</div>;
 
   return (
     <div className="bg-bg-surface border border-bg-border rounded-xl p-4">
@@ -114,6 +131,12 @@ export default function BotConfig({ botId, config }: BotConfigProps) {
         </div>
       </div>
 
+      {saveError && (
+        <p className="mt-2 text-xs text-accent-red">{saveError}</p>
+      )}
+      {!config && (
+        <p className="mt-2 text-xs text-accent-amber">Default config shown. Connect to backend to save changes.</p>
+      )}
       <button
         onClick={handleSave}
         disabled={isPending}

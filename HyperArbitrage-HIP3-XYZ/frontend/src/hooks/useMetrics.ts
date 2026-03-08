@@ -9,6 +9,8 @@ export function useBotMetrics(botId: number) {
     queryFn: () => fetchBotMetrics(botId),
     refetchInterval: 10000,
     staleTime: 5000,
+    retry: 1,
+    retryDelay: 5000,
   });
 }
 
@@ -18,6 +20,8 @@ export function useAggregatedMetrics() {
     queryFn: fetchAggregatedMetrics,
     refetchInterval: 10000,
     staleTime: 5000,
+    retry: 1,
+    retryDelay: 5000,
   });
 }
 
@@ -26,5 +30,7 @@ export function useTrades(botId: number, page = 1, pageSize = 50) {
     queryKey: ["trades", botId, page, pageSize],
     queryFn: () => fetchTrades(botId, page, pageSize),
     staleTime: 3000,
+    retry: 1,
+    retryDelay: 5000,
   });
 }

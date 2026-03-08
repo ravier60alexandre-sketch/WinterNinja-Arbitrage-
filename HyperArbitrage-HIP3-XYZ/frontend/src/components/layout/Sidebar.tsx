@@ -12,6 +12,7 @@ export default function Sidebar() {
 
   const navItems = [
     { href: "/dashboard", label: "Dashboard" },
+    { href: "/spread-analyzer", label: "Spread Analyzer" },
     { href: "/admin", label: "Admin" },
   ];
 
@@ -30,7 +31,7 @@ export default function Sidebar() {
             href={item.href}
             className={cn(
               "block px-3 py-2 rounded-lg text-sm transition-colors",
-              pathname === item.href
+              pathname === item.href || pathname.startsWith(item.href + "/")
                 ? "bg-accent-indigo/20 text-accent-indigo"
                 : "text-text-secondary hover:text-text-primary hover:bg-bg-border/50"
             )}

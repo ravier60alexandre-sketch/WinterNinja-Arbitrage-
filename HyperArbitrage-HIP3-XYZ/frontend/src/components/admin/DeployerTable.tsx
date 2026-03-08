@@ -5,13 +5,23 @@ import { fetchDeployerStats } from "@/lib/api";
 import { formatDecimal } from "@/lib/formatters";
 
 export default function DeployerTable() {
-  const { data: stats } = useQuery({
+  const { data: stats, error } = useQuery({
     queryKey: ["deployer-stats"],
     queryFn: fetchDeployerStats,
     refetchInterval: 60000,
+    retry: 1,
+    retryDelay: 5000,
   });
 
-  if (!stats || stats.length === 0) return null;
+  if (error) {
+    return (
+      <div className="text-xs text-text-secondary text-center py-8">
+        Deployer data unavailable. Backend offline.
+      </div>
+    );
+  }
+
+  if (!stats || stats.length === 0) return <div className="text-xs text-text-secondary text-center py-8">No deployer data</div>;
 
   return (
     <div className="bg-bg-surface border border-bg-border rounded-xl p-4">

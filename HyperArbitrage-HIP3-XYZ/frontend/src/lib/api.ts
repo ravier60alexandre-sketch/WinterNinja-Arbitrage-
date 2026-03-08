@@ -11,19 +11,33 @@ import type {
 } from "./types";
 import { API_URL } from "./constants";
 
+export class APIError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "APIError";
+    this.status = status;
+  }
+}
+
 async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
   const url = `${API_URL}/api/v1${path}`;
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+      },
+    });
+  } catch {
+    throw new APIError(0, `Backend unreachable at ${API_URL}. Is the server running?`);
+  }
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`API ${res.status}: ${body}`);
+    throw new APIError(res.status, `API ${res.status}: ${body}`);
   }
 
   return res.json();
