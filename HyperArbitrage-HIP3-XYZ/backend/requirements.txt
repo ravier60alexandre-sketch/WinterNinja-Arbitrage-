@@ -15,7 +15,7 @@ redis[hiredis]==5.2.1
 celery[redis]==5.4.0
 orjson==3.10.13
 python-socketio==5.12.1
-hyperliquid-python-sdk==0.9.1
+hyperliquid-python-sdk==0.22.0
 numpy==2.2.1
 reportlab==4.2.5
 python-jose[cryptography]==3.3.0
