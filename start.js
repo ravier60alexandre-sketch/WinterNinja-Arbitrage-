@@ -44,11 +44,59 @@ async function main() {
     fs.mkdirSync(dataDir, { recursive: true });
   }
 
-  // Start collector
+  // ── Start collector (spread WebSocket) ──
   const collector = require('./collector');
   await collector.start(config);
 
-  // Start Next.js dashboard
+  // ── Start Python bot engine (FastAPI on port 8000) ──
+  const backendDir = path.resolve(__dirname, 'backend');
+  const envFile = path.resolve(__dirname, '.env');
+  let botEngine = null;
+
+  if (fs.existsSync(backendDir) && fs.existsSync(path.resolve(backendDir, 'main.py'))) {
+    // Load .env file into environment for the Python process
+    const backendEnv = { ...process.env };
+    if (fs.existsSync(envFile)) {
+      const envContent = fs.readFileSync(envFile, 'utf8');
+      for (const line of envContent.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#')) {
+          const eqIdx = trimmed.indexOf('=');
+          if (eqIdx > 0) {
+            const key = trimmed.slice(0, eqIdx).trim();
+            const val = trimmed.slice(eqIdx + 1).trim();
+            backendEnv[key] = val;
+          }
+        }
+      }
+    }
+
+    botEngine = spawn('python3', ['-u', 'main.py'], {
+      cwd: backendDir,
+      stdio: 'pipe',
+      env: backendEnv,
+    });
+
+    botEngine.stdout.on('data', (data) => {
+      const line = data.toString().trim();
+      if (line) console.log(`[BOT-ENGINE] ${line}`);
+    });
+
+    botEngine.stderr.on('data', (data) => {
+      const line = data.toString().trim();
+      if (line) console.error(`[BOT-ENGINE] ${line}`);
+    });
+
+    botEngine.on('close', (code) => {
+      console.log(`[BOT-ENGINE] Exited with code ${code}`);
+    });
+
+    console.log('[INFO] Bot engine (FastAPI) starting on http://localhost:8000');
+  } else {
+    console.log('[WARN] backend/main.py not found — bot engine disabled');
+  }
+
+  // ── Start Next.js dashboard ──
   const dashboardDir = path.resolve(__dirname, 'dashboard');
   const port = config.dashboard_port || 3000;
 
@@ -81,12 +129,13 @@ async function main() {
 
   console.log(`[INFO] Dashboard available at http://localhost:${port}`);
 
-  // Graceful shutdown
+  // ── Graceful shutdown ──
   const shutdown = () => {
     console.log('\n[INFO] Shutting down...');
     collector.stop();
+    if (botEngine) botEngine.kill('SIGTERM');
     dashboard.kill('SIGTERM');
-    setTimeout(() => process.exit(0), 2000);
+    setTimeout(() => process.exit(0), 3000);
   };
 
   process.on('SIGINT', shutdown);
