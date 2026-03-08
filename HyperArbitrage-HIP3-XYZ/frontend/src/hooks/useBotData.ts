@@ -1,8 +1,8 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchBot, fetchBots, botAction, updateBotConfig } from "@/lib/api";
-import type { BotAction, BotConfig } from "@/lib/types";
+import { fetchBot, fetchBots, botAction, updateBotConfig, createBot } from "@/lib/api";
+import type { BotAction, BotConfig, BotCreatePayload } from "@/lib/types";
 import { useBotStore } from "@/store/botStore";
 import { useEffect } from "react";
 
@@ -51,6 +51,17 @@ export function useBotAction(botId: number) {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["bot", botId] });
+      queryClient.invalidateQueries({ queryKey: ["bots"] });
+    },
+  });
+}
+
+export function useCreateBot() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: BotCreatePayload) => createBot(payload),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["bots"] });
     },
   });

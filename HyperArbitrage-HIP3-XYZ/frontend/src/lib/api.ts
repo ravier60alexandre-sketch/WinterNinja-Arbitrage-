@@ -4,6 +4,7 @@ import type {
   Bot,
   BotAction,
   BotConfig,
+  BotCreatePayload,
   BotMetrics,
   DeployerStats,
   Trade,
@@ -30,6 +31,13 @@ async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
 
 export async function fetchBots(): Promise<{ bots: Bot[]; total: number }> {
   return fetchAPI("/bots/");
+}
+
+export async function createBot(payload: BotCreatePayload): Promise<Bot> {
+  return fetchAPI("/bots/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function fetchBot(id: number): Promise<Bot> {

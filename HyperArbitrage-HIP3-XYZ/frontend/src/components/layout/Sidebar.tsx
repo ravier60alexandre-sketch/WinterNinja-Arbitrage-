@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/formatters";
-import { APP_NAME, BOT_DEFINITIONS, BOT_STATE_COLORS } from "@/lib/constants";
+import { APP_NAME, BOT_STATE_COLORS } from "@/lib/constants";
 import { useBotStore } from "@/store/botStore";
 
 export default function Sidebar() {
@@ -23,7 +23,7 @@ export default function Sidebar() {
         </Link>
       </div>
 
-      <nav className="flex-1 p-3 space-y-1">
+      <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
         {navItems.map((item) => (
           <Link
             key={item.href}
@@ -41,13 +41,14 @@ export default function Sidebar() {
 
         <div className="pt-4">
           <p className="px-3 text-[10px] text-text-secondary uppercase tracking-wider mb-2">Bots</p>
-          {BOT_DEFINITIONS.map((def) => {
-            const bot = bots.find((b) => b.id === def.id);
-            const state = bot?.state || "IDLE";
-            const href = `/dashboard/${def.id}`;
+          {bots.length === 0 && (
+            <p className="px-3 text-[10px] text-text-secondary/50 italic">No bots deployed</p>
+          )}
+          {bots.map((bot) => {
+            const href = `/dashboard/${bot.id}`;
             return (
               <Link
-                key={def.id}
+                key={bot.id}
                 href={href}
                 className={cn(
                   "flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-colors",
@@ -56,9 +57,9 @@ export default function Sidebar() {
                     : "text-text-secondary hover:text-text-primary hover:bg-bg-border/30"
                 )}
               >
-                <span className="truncate">{def.name} · {def.pair_b}</span>
-                <span className={cn("text-[10px]", BOT_STATE_COLORS[state])}>
-                  {state}
+                <span className="truncate">{bot.name}</span>
+                <span className={cn("text-[10px]", BOT_STATE_COLORS[bot.state] || "text-text-secondary")}>
+                  {bot.state}
                 </span>
               </Link>
             );

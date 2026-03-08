@@ -102,6 +102,16 @@ export interface SpreadSnapshot {
   p95: string | null;
 }
 
+export interface BotCreatePayload {
+  name: string;
+  pair_a: string;
+  pair_b: string;
+  direction: Direction;
+  account_address: string;
+  api_key: string;
+  sub_account_address?: string | null;
+}
+
 export type WSEventType =
   | "spread_update"
   | "trade_executed"
