@@ -18,7 +18,7 @@ export default function BotDetailPage() {
   const params = useParams();
   const botId = Number(params.botId);
   const [bot, setBot] = useState<Bot | null>(null);
-  const [pnlData, setPnlData] = useState<Array<{ time: string; pnl: number }>>([]);
+  const [pnlData, setPnlData] = useState<Array<{ timestamp: number; cumulative_pnl: number }>>([]);
 
   useWebSocket();
 
@@ -35,7 +35,7 @@ export default function BotDetailPage() {
       .reverse()
       .map((t) => {
         cumulative += parseFloat(t.net_pnl!);
-        return { time: t.exit_time || t.entry_time, pnl: cumulative };
+        return { timestamp: new Date(t.exit_time || t.entry_time).getTime(), cumulative_pnl: cumulative };
       });
     setPnlData(points);
   }, [botId]);

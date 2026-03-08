@@ -1,78 +1,59 @@
 "use client";
 
-import { useState } from "react";
 import { useBotStore } from "@/store/botStore";
-import { useWebSocket } from "@/hooks/useWebSocket";
-import { useBots } from "@/hooks/useBotData";
 import BotCard from "@/components/bot/BotCard";
-import SetupBotForm from "@/components/bot/SetupBotForm";
 import ConnectionStatus from "@/components/shared/ConnectionStatus";
 
 export default function DashboardPage() {
   const bots = useBotStore((s) => s.bots);
-  const [showSetup, setShowSetup] = useState(false);
-  useBots();
-  useWebSocket();
 
-  const hasBots = bots.length > 0;
+  const shortBots = bots.filter((b) => b.direction === "long_a_short_b");
+  const longBots = bots.filter((b) => b.direction === "short_a_long_b");
+  const connectedCount = bots.filter((b) => b.connected).length;
+  const runningCount = bots.filter((b) => b.state === "RUNNING").length;
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-text-primary">
-          Bot Dashboard
-        </h1>
-        <div className="flex items-center gap-3">
-          {hasBots && !showSetup && (
-            <button
-              onClick={() => setShowSetup(true)}
-              className="px-4 py-2 bg-accent-indigo text-white text-xs font-semibold rounded-lg hover:bg-accent-indigo/80 transition-colors"
-            >
-              + New Bot
-            </button>
-          )}
-          <ConnectionStatus />
+        <div>
+          <h1 className="text-2xl font-semibold text-text-primary">6-Bot Deployer Router</h1>
+          <p className="text-xs text-text-secondary mt-1">
+            {connectedCount}/6 connected &middot; {runningCount} running
+          </p>
+        </div>
+        <ConnectionStatus />
+      </div>
+
+      {/* XYZ Short section */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <span className="px-2.5 py-1 bg-accent-red/10 border border-accent-red/20 rounded text-xs font-bold text-accent-red">
+            XYZ Short
+          </span>
+          <span className="text-xs text-text-secondary">Long A / Short B — 3 deployers</span>
+        </div>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          {shortBots.map((bot) => (
+            <BotCard key={bot.id} bot={bot} />
+          ))}
         </div>
       </div>
 
-      {showSetup && (
-        <SetupBotForm
-          onSuccess={() => setShowSetup(false)}
-          onCancel={() => setShowSetup(false)}
-        />
-      )}
-
-      {hasBots && (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-3">
-          {bots.map((bot) => (
-            <BotCard key={bot.id} bot={bot} pnl={null} trades={0} />
+      {/* XYZ Long section */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <span className="px-2.5 py-1 bg-accent-green/10 border border-accent-green/20 rounded text-xs font-bold text-accent-green">
+            XYZ Long
+          </span>
+          <span className="text-xs text-text-secondary">Short A / Long B — 3 deployers</span>
+        </div>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          {longBots.map((bot) => (
+            <BotCard key={bot.id} bot={bot} />
           ))}
         </div>
-      )}
-
-      {!hasBots && !showSetup && (
-        <div className="flex flex-col items-center justify-center h-96 rounded-xl border border-bg-border bg-bg-surface">
-          <div className="text-center space-y-4">
-            <div className="w-16 h-16 mx-auto rounded-full bg-accent-indigo/10 border border-accent-indigo/20 flex items-center justify-center">
-              <svg className="w-7 h-7 text-accent-indigo" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-              </svg>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-text-primary mb-1">No bots deployed yet</h3>
-              <p className="text-xs text-text-secondary max-w-sm">
-                Connect your Hyperliquid API key and deploy your first arbitrage bot to get started.
-              </p>
-            </div>
-            <button
-              onClick={() => setShowSetup(true)}
-              className="px-6 py-2.5 bg-accent-indigo text-white text-sm font-semibold rounded-lg hover:bg-accent-indigo/80 transition-colors"
-            >
-              Deploy First Bot
-            </button>
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }

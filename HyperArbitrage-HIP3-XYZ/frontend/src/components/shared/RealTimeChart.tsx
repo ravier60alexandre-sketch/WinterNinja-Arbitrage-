@@ -10,7 +10,6 @@ import { formatTimeShort } from "@/lib/formatters";
 
 interface DataPoint {
   timestamp: number;
-  value: number;
   [key: string]: number;
 }
 

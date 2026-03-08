@@ -39,31 +39,58 @@ export default function Sidebar() {
           </Link>
         ))}
 
+        {/* XYZ Short */}
         <div className="pt-4">
-          <p className="px-3 text-[10px] text-text-secondary uppercase tracking-wider mb-2">Bots</p>
-          {bots.length === 0 && (
-            <p className="px-3 text-[10px] text-text-secondary/50 italic">No bots deployed</p>
-          )}
-          {bots.map((bot) => {
-            const href = `/dashboard/${bot.id}`;
-            return (
-              <Link
-                key={bot.id}
-                href={href}
-                className={cn(
-                  "flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-colors",
-                  pathname === href
-                    ? "bg-bg-border text-text-primary"
-                    : "text-text-secondary hover:text-text-primary hover:bg-bg-border/30"
+          <p className="px-3 text-[10px] text-accent-red/70 uppercase tracking-wider mb-1.5">XYZ Short</p>
+          {bots.filter((b) => b.direction === "long_a_short_b").map((bot) => (
+            <Link
+              key={bot.id}
+              href={`/dashboard/${bot.id}`}
+              className={cn(
+                "flex items-center justify-between px-3 py-1.5 rounded-lg text-xs transition-colors",
+                pathname === `/dashboard/${bot.id}`
+                  ? "bg-bg-border text-text-primary"
+                  : "text-text-secondary hover:text-text-primary hover:bg-bg-border/30"
+              )}
+            >
+              <span>vs {bot.deployer}</span>
+              <span className="flex items-center gap-1">
+                {bot.connected && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-accent-green inline-block" />
                 )}
-              >
-                <span className="truncate">{bot.name}</span>
-                <span className={cn("text-[10px]", BOT_STATE_COLORS[bot.state] || "text-text-secondary")}>
+                <span className={cn("text-[10px]", BOT_STATE_COLORS[bot.state])}>
                   {bot.state}
                 </span>
-              </Link>
-            );
-          })}
+              </span>
+            </Link>
+          ))}
+        </div>
+
+        {/* XYZ Long */}
+        <div className="pt-3">
+          <p className="px-3 text-[10px] text-accent-green/70 uppercase tracking-wider mb-1.5">XYZ Long</p>
+          {bots.filter((b) => b.direction === "short_a_long_b").map((bot) => (
+            <Link
+              key={bot.id}
+              href={`/dashboard/${bot.id}`}
+              className={cn(
+                "flex items-center justify-between px-3 py-1.5 rounded-lg text-xs transition-colors",
+                pathname === `/dashboard/${bot.id}`
+                  ? "bg-bg-border text-text-primary"
+                  : "text-text-secondary hover:text-text-primary hover:bg-bg-border/30"
+              )}
+            >
+              <span>vs {bot.deployer}</span>
+              <span className="flex items-center gap-1">
+                {bot.connected && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-accent-green inline-block" />
+                )}
+                <span className={cn("text-[10px]", BOT_STATE_COLORS[bot.state])}>
+                  {bot.state}
+                </span>
+              </span>
+            </Link>
+          ))}
         </div>
       </nav>
     </aside>
