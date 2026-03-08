@@ -5,7 +5,7 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
-from app.models.metrics import BotMetrics
+from app.models.metrics import BotMetric
 from app.models.trade import Trade
 
 logger = get_logger("services.metrics")
@@ -15,16 +15,16 @@ class MetricsService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get_daily_metrics(self, bot_id: int, day: date | None = None) -> BotMetrics | None:
+    async def get_daily_metrics(self, bot_id: int, day: date | None = None) -> BotMetric | None:
         target_date = day or date.today()
         result = await self._session.execute(
-            select(BotMetrics).where(
-                and_(BotMetrics.bot_id == bot_id, BotMetrics.date == target_date)
+            select(BotMetric).where(
+                and_(BotMetric.bot_id == bot_id, BotMetric.date == target_date)
             )
         )
         return result.scalar_one_or_none()
 
-    async def compute_and_save_metrics(self, bot_id: int, day: date | None = None) -> BotMetrics:
+    async def compute_and_save_metrics(self, bot_id: int, day: date | None = None) -> BotMetric:
         target_date = day or date.today()
 
         result = await self._session.execute(
@@ -73,7 +73,7 @@ class MetricsService:
             existing.max_drawdown = max_dd
             metrics = existing
         else:
-            metrics = BotMetrics(
+            metrics = BotMetric(
                 bot_id=bot_id,
                 date=target_date,
                 total_trades=total_trades,
@@ -94,14 +94,14 @@ class MetricsService:
     async def get_aggregated(self) -> dict:
         result = await self._session.execute(
             select(
-                func.sum(BotMetrics.net_pnl).label("total_pnl"),
-                func.sum(BotMetrics.total_fees_paid).label("total_fees"),
-                func.sum(BotMetrics.total_volume).label("total_volume"),
-                func.sum(BotMetrics.total_trades).label("total_trades"),
-                func.sum(BotMetrics.winning_trades).label("winning_trades"),
-                func.sum(BotMetrics.one_leg_events).label("total_one_leg"),
-                func.avg(BotMetrics.avg_slippage).label("avg_slippage"),
-                func.max(BotMetrics.max_drawdown).label("max_drawdown"),
+                func.sum(BotMetric.net_pnl).label("total_pnl"),
+                func.sum(BotMetric.total_fees_paid).label("total_fees"),
+                func.sum(BotMetric.total_volume).label("total_volume"),
+                func.sum(BotMetric.total_trades).label("total_trades"),
+                func.sum(BotMetric.winning_trades).label("winning_trades"),
+                func.sum(BotMetric.one_leg_events).label("total_one_leg"),
+                func.avg(BotMetric.avg_slippage).label("avg_slippage"),
+                func.max(BotMetric.max_drawdown).label("max_drawdown"),
             )
         )
         row = result.one()

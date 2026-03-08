@@ -8,8 +8,8 @@ from app.core.database import get_session
 from app.core.security import encrypt_api_key
 from app.models.bot import Bot, BotConfig
 from app.schemas.bot import (
-    BotConfigUpdate, BotCreate, BotListResponse, BotResponse,
-    BotStateChange, BotConfigSchema,
+    BotActionRequest, BotConfigResponse, BotConfigUpdate, BotCreate,
+    BotListResponse, BotResponse,
 )
 from app.bots.bot_manager import bot_manager
 
@@ -50,8 +50,7 @@ async def create_bot(body: BotCreate, session: AsyncSession = Depends(get_sessio
     session.add(bot)
     await session.flush()
 
-    config_data = body.config or BotConfigSchema()
-    config = BotConfig(bot_id=bot.id, **config_data.model_dump())
+    config = BotConfig(bot_id=bot.id)
     session.add(config)
     await session.flush()
 
@@ -59,7 +58,7 @@ async def create_bot(body: BotCreate, session: AsyncSession = Depends(get_sessio
 
 
 @router.post("/{bot_id}/action")
-async def bot_action(bot_id: int, body: BotStateChange, session: AsyncSession = Depends(get_session)):
+async def bot_action(bot_id: int, body: BotActionRequest, session: AsyncSession = Depends(get_session)):
     result = await session.execute(select(Bot).where(Bot.id == bot_id))
     bot = result.scalar_one_or_none()
     if bot is None:
@@ -90,7 +89,7 @@ async def bot_action(bot_id: int, body: BotStateChange, session: AsyncSession = 
     return {"status": "ok", "bot_id": bot_id, "state": bot.state}
 
 
-@router.patch("/{bot_id}/config", response_model=BotConfigSchema)
+@router.patch("/{bot_id}/config", response_model=BotConfigResponse)
 async def update_config(
     bot_id: int, body: BotConfigUpdate, session: AsyncSession = Depends(get_session)
 ):
@@ -111,4 +110,4 @@ async def update_config(
     if instance:
         instance.update_config(updates)
 
-    return BotConfigSchema.model_validate(config)
+    return BotConfigResponse.model_validate(config)

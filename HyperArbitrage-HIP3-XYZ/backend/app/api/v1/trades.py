@@ -23,7 +23,7 @@ async def get_trades(
         trades=[TradeResponse.model_validate(t) for t in trades],
         total=total,
         page=page,
-        page_size=page_size,
+        per_page=page_size,
     )
 
 

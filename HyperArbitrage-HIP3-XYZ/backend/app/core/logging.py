@@ -1,5 +1,8 @@
+import gzip
 import logging
 import logging.handlers
+import os
+import shutil
 from pathlib import Path
 
 import structlog
@@ -8,19 +11,45 @@ from app.config import settings
 
 SECRET_FIELDS = frozenset({
     "api_key", "api_key_encrypted", "private_key", "secret",
-    "password", "token", "MASTER_ENCRYPTION_KEY", "APP_SECRET_KEY",
+    "password", "token", "master_encryption_key", "app_secret_key",
 })
 
 
 def redact_secrets(_logger: str, _method: str, event_dict: dict) -> dict:
     for key in list(event_dict.keys()):
-        if key.lower() in SECRET_FIELDS or any(s in key.lower() for s in ("api_key", "private_key", "secret", "password")):
+        if key.lower() in SECRET_FIELDS or any(s in key.lower() for s in ("api_key", "private_key", "secret", "password", "token")):
             event_dict[key] = "***REDACTED***"
     return event_dict
 
 
+def _namer(name: str) -> str:
+    return name + ".gz"
+
+
+def _rotator(source: str, dest: str) -> None:
+    with open(source, "rb") as f_in:
+        with gzip.open(dest, "wb") as f_out:
+            shutil.copyfileobj(f_in, f_out)
+    os.remove(source)
+
+
+_current_log_level: int = logging.INFO
+
+
+def set_log_level(level: str) -> None:
+    global _current_log_level
+    numeric_level = getattr(logging, level.upper(), logging.INFO)
+    _current_log_level = numeric_level
+    root_logger = logging.getLogger()
+    root_logger.setLevel(numeric_level)
+    for handler in root_logger.handlers:
+        handler.setLevel(numeric_level)
+
+
 def setup_logging() -> None:
+    global _current_log_level
     log_level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
+    _current_log_level = log_level
 
     log_path = Path(settings.LOG_FILE_PATH)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -31,6 +60,8 @@ def setup_logging() -> None:
         backupCount=settings.LOG_BACKUP_COUNT,
         encoding="utf-8",
     )
+    file_handler.rotator = _rotator
+    file_handler.namer = _namer
 
     logging.basicConfig(
         format="%(message)s",

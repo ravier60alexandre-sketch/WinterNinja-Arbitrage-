@@ -4,13 +4,13 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
-from app.schemas.metrics import AggregatedMetrics, BotMetricsResponse
+from app.schemas.metrics import AggregatedMetrics, MetricsResponse
 from app.services.metrics_service import MetricsService
 
 router = APIRouter(prefix="/metrics", tags=["metrics"])
 
 
-@router.get("/{bot_id}", response_model=BotMetricsResponse | None)
+@router.get("/{bot_id}", response_model=MetricsResponse | None)
 async def get_bot_metrics(
     bot_id: int,
     day: date | None = Query(None),
@@ -21,13 +21,7 @@ async def get_bot_metrics(
     if metrics is None:
         return None
 
-    total = metrics.total_trades or 0
-    winning = metrics.winning_trades or 0
-    win_rate = (winning / total * 100) if total > 0 else 0.0
-
-    resp = BotMetricsResponse.model_validate(metrics)
-    resp.win_rate = win_rate
-    return resp
+    return MetricsResponse.model_validate(metrics)
 
 
 @router.get("/", response_model=AggregatedMetrics)

@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.tasks.celery_app import celery_app
 from app.core.database import async_session_factory
 from app.core.logging import get_logger
-from app.models.trade import SpreadSnapshot
-from app.models.deployer import DeployerStats
+from app.models.metrics import SpreadSnapshot
+from app.models.deployer import DeployerStat
 from app.services.metrics_service import MetricsService
 
 logger = get_logger("tasks.periodic")
@@ -81,7 +81,7 @@ def update_deployer_stats():
 
                 for deployer in deployers:
                     asset_info = universe.get(deployer, {})
-                    stat = DeployerStats(
+                    stat = DeployerStat(
                         deployer=deployer,
                         funding_rate=Decimal(str(asset_info.get("funding", "0"))) if asset_info else None,
                         mark_price=Decimal(str(asset_info.get("markPx", "0"))) if asset_info else None,

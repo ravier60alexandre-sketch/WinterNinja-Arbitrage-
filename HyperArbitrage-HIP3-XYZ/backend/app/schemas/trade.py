@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class TradeResponse(BaseModel):
@@ -35,18 +35,11 @@ class TradeListResponse(BaseModel):
     trades: list[TradeResponse]
     total: int
     page: int
-    page_size: int
+    per_page: int
 
 
-class SpreadSnapshotResponse(BaseModel):
-    timestamp: datetime
-    spread: Decimal
-    mid_a: Decimal
-    mid_b: Decimal
-    edge: Decimal | None
-    p50: Decimal | None
-    p75: Decimal | None
-    p80: Decimal | None
-    p95: Decimal | None
-
-    model_config = {"from_attributes": True}
+class TradeFilter(BaseModel):
+    bot_id: int | None = None
+    status: str | None = None
+    date_from: date | None = Field(default=None, description="Filter trades from this date (inclusive)")
+    date_to: date | None = Field(default=None, description="Filter trades up to this date (inclusive)")

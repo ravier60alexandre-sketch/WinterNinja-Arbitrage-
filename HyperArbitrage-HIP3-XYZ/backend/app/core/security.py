@@ -8,22 +8,19 @@ from app.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-_fernet: Fernet | None = None
+
+def _get_fernet(master_key: str) -> Fernet:
+    return Fernet(master_key.encode())
 
 
-def get_fernet() -> Fernet:
-    global _fernet
-    if _fernet is None:
-        _fernet = Fernet(settings.MASTER_ENCRYPTION_KEY.encode())
-    return _fernet
+def encrypt_api_key(key: str, master_key: str) -> str:
+    fernet = _get_fernet(master_key)
+    return fernet.encrypt(key.encode()).decode()
 
 
-def encrypt_api_key(plain_key: str) -> str:
-    return get_fernet().encrypt(plain_key.encode()).decode()
-
-
-def decrypt_api_key(encrypted_key: str) -> str:
-    return get_fernet().decrypt(encrypted_key.encode()).decode()
+def decrypt_api_key(encrypted: str, master_key: str) -> str:
+    fernet = _get_fernet(master_key)
+    return fernet.decrypt(encrypted.encode()).decode()
 
 
 def _read_key(path: str) -> str:

@@ -1,10 +1,11 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel
 
 
-class BotMetricsResponse(BaseModel):
+class MetricsResponse(BaseModel):
+    id: int
     bot_id: int
     date: date
     total_trades: int
@@ -17,7 +18,6 @@ class BotMetricsResponse(BaseModel):
     avg_slippage: Decimal
     max_drawdown: Decimal
     one_leg_events: int
-    win_rate: float
 
     model_config = {"from_attributes": True}
 
@@ -35,10 +35,28 @@ class AggregatedMetrics(BaseModel):
 
 
 class DeployerStatsResponse(BaseModel):
+    id: int
     deployer: str
+    timestamp: datetime
     total_volume: Decimal | None
     open_interest: Decimal | None
     funding_rate: Decimal | None
     mark_price: Decimal | None
+
+    model_config = {"from_attributes": True}
+
+
+class SpreadSnapshotResponse(BaseModel):
+    id: int
+    bot_id: int
+    timestamp: datetime
+    spread: Decimal
+    mid_a: Decimal
+    mid_b: Decimal
+    edge: Decimal | None
+    p50: Decimal | None
+    p75: Decimal | None
+    p80: Decimal | None
+    p95: Decimal | None
 
     model_config = {"from_attributes": True}

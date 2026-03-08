@@ -1,8 +1,8 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SpreadUpdateData(BaseModel):
@@ -25,6 +25,7 @@ class TradeExecutedData(BaseModel):
     entry_price_b: Decimal
     entry_spread: Decimal
     edge_at_entry: Decimal
+    status: str
 
 
 class BotStateChangeData(BaseModel):
@@ -36,15 +37,16 @@ class BotStateChangeData(BaseModel):
 class MetricsUpdateData(BaseModel):
     net_pnl: Decimal
     total_trades: int
+    winning_trades: int
     win_rate: float
     one_leg_events: int
+    max_drawdown: Decimal
 
 
 class LogEventData(BaseModel):
     level: str
-    logger: str
-    event: str
-    details: dict | None = None
+    message: str
+    context: dict | None = None
 
 
 class FundingUpdateData(BaseModel):
@@ -54,22 +56,56 @@ class FundingUpdateData(BaseModel):
     blocked: bool
 
 
-class WSEvent(BaseModel):
-    type: Literal[
-        "spread_update",
-        "trade_executed",
-        "bot_state_change",
-        "metrics_update",
-        "log_event",
-        "funding_update",
-    ]
+class SpreadUpdateEvent(BaseModel):
+    type: Literal["spread_update"] = "spread_update"
     bot_id: int
     timestamp: datetime
-    data: (
-        SpreadUpdateData
-        | TradeExecutedData
-        | BotStateChangeData
-        | MetricsUpdateData
-        | LogEventData
-        | FundingUpdateData
-    )
+    data: SpreadUpdateData
+
+
+class TradeExecutedEvent(BaseModel):
+    type: Literal["trade_executed"] = "trade_executed"
+    bot_id: int
+    timestamp: datetime
+    data: TradeExecutedData
+
+
+class BotStateChangeEvent(BaseModel):
+    type: Literal["bot_state_change"] = "bot_state_change"
+    bot_id: int
+    timestamp: datetime
+    data: BotStateChangeData
+
+
+class MetricsUpdateEvent(BaseModel):
+    type: Literal["metrics_update"] = "metrics_update"
+    bot_id: int
+    timestamp: datetime
+    data: MetricsUpdateData
+
+
+class LogEvent(BaseModel):
+    type: Literal["log_event"] = "log_event"
+    bot_id: int
+    timestamp: datetime
+    data: LogEventData
+
+
+class FundingUpdateEvent(BaseModel):
+    type: Literal["funding_update"] = "funding_update"
+    bot_id: int
+    timestamp: datetime
+    data: FundingUpdateData
+
+
+WSEvent = Annotated[
+    Union[
+        SpreadUpdateEvent,
+        TradeExecutedEvent,
+        BotStateChangeEvent,
+        MetricsUpdateEvent,
+        LogEvent,
+        FundingUpdateEvent,
+    ],
+    Field(discriminator="type"),
+]
