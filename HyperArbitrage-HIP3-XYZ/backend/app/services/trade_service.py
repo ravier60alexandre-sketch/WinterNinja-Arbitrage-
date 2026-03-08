@@ -5,7 +5,8 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
-from app.models.trade import Trade, SpreadSnapshot
+from app.models.metrics import SpreadSnapshot
+from app.models.trade import Trade
 
 logger = get_logger("services.trade")
 

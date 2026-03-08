@@ -42,6 +42,7 @@ class BaseBot:
 
     __slots__ = (
         "bot_id",
+        "name",
         "config",
         "_state",
         "_lock",
@@ -50,9 +51,10 @@ class BaseBot:
         "updated_at",
     )
 
-    def __init__(self, bot_id: int, config: dict) -> None:
+    def __init__(self, bot_id: int, name: str = "", config: dict | None = None) -> None:
         self.bot_id = bot_id
-        self.config: dict = config
+        self.name: str = name
+        self.config: dict = config or {}
         self._state = BotState.IDLE
         self._lock = asyncio.Lock()
         self._state_callback: StateCallback | None = None
@@ -128,6 +130,10 @@ class BaseBot:
                         bot_id=self.bot_id,
                         error=str(exc),
                     )
+
+    # Alias used by BotInstance
+    async def transition(self, new_state: BotState, reason: str = "") -> None:
+        await self.transition_state(new_state, reason)
 
     # ------------------------------------------------------------------
     # Convenience helpers

@@ -55,19 +55,27 @@ class SpreadCalculator:
 
     def add_sample(
         self,
-        spread: Decimal,
         mid_a: Decimal,
         mid_b: Decimal,
+        spread: Decimal | None = None,
         timestamp: float | None = None,
     ) -> SpreadSample:
         """Record a new spread observation.
 
-        *spread* is in basis points.  *mid_a* / *mid_b* must be positive.
+        If *spread* is not provided, it is computed as
+        ``(mid_a - mid_b) / mid_b * 10000`` (basis points).
+        *mid_a* / *mid_b* must be positive.
         """
         if mid_a <= 0 or mid_b <= 0:
             raise ValueError("Mid prices must be positive")
 
-        spread = spread.quantize(_QUANT_8, rounding=ROUND_HALF_UP)
+        if spread is None:
+            spread = ((mid_a - mid_b) / mid_b * Decimal("10000")).quantize(
+                _QUANT_8, rounding=ROUND_HALF_UP
+            )
+        else:
+            spread = spread.quantize(_QUANT_8, rounding=ROUND_HALF_UP)
+
         ts = timestamp if timestamp is not None else time.time()
 
         sample = SpreadSample(
@@ -193,6 +201,9 @@ class SpreadCalculator:
         self._batch_buffer.clear()
         self._last_flush = time.monotonic()
         return batch
+
+    # Alias for backwards compatibility
+    flush_batch = flush
 
     def should_flush(self, interval_seconds: float = 5.0) -> bool:
         """Return True when enough time has elapsed and there are buffered samples."""

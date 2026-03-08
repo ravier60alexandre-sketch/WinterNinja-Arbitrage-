@@ -42,3 +42,7 @@ async def init_db() -> None:
 
 async def close_db() -> None:
     await engine.dispose()
+
+
+# Alias used by API routes
+get_session = get_db

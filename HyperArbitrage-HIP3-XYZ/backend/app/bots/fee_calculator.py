@@ -64,6 +64,12 @@ class FeeCalculator:
         roundtrip = ((fee_a + fee_b) * 2).quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP)
         return roundtrip
 
+    async def get_fees_roundtrip(self, asset_a: str, asset_b: str) -> Decimal:
+        """Convenience method: compute roundtrip fees using cached account address."""
+        fee_a = self._last_known_fees.get(asset_a, Decimal("0.0007"))
+        fee_b = self._last_known_fees.get(asset_b, Decimal("0.0007"))
+        return ((fee_a + fee_b) * 2).quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP)
+
     def fees_in_bps(self, fees_roundtrip: Decimal) -> Decimal:
         return (fees_roundtrip * Decimal("10000")).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
