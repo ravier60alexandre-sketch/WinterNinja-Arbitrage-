@@ -8,7 +8,10 @@ const BOTS_PATH = resolve(process.cwd(), '..', 'data', 'bots.json');
 function loadBots() {
   try {
     if (existsSync(BOTS_PATH)) {
-      return JSON.parse(readFileSync(BOTS_PATH, 'utf8'));
+      const data = JSON.parse(readFileSync(BOTS_PATH, 'utf8'));
+      if (data.bots && data.bots.length > 0) {
+        return data;
+      }
     }
   } catch (e) {}
   // Initialize default 6-bot structure
