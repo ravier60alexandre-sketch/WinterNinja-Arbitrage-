@@ -24,6 +24,7 @@ class BotConfigUpdate(BaseModel):
     one_leg_protection: bool | None = None
     exit_mode: Literal["on_profit", "on_reverse"] | None = None
     min_edge_bps: float | None = Field(default=None, ge=0)
+    pair_toggles: dict[str, bool] | None = None
 
 
 class BotConfigResponse(BaseModel):
@@ -38,6 +39,7 @@ class BotConfigResponse(BaseModel):
     one_leg_protection: bool
     exit_mode: str
     min_edge_bps: float
+    disabled_pairs: str | None = None
     updated_at: datetime
 
     model_config = {"from_attributes": True}

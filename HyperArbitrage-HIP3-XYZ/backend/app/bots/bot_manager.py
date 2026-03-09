@@ -114,6 +114,7 @@ class BotManager:
                     "one_leg_protection": config_model.one_leg_protection,
                     "exit_mode": config_model.exit_mode,
                     "min_edge_bps": config_model.min_edge_bps,
+                    "disabled_pairs": config_model.disabled_pairs,
                 }
 
             is_mainnet = settings.HL_MAINNET
@@ -143,6 +144,7 @@ class BotManager:
                 exchange=exchange,
                 hl_info=hl_info,
                 config=config,
+                deployer_registry=self._deployer_registry,
             )
 
             self._bots[bot_model.id] = instance
@@ -179,6 +181,22 @@ class BotManager:
                 raise ValueError(f"Bot {bot_id} not found")
             await bot.reset()
             logger.info("bot_reset", bot_id=bot_id)
+
+    async def toggle_pair(self, bot_id: int, pair_key: str, enabled: bool) -> None:
+        async with self._lock:
+            bot = self._bots.get(bot_id)
+            if bot is None:
+                raise ValueError(f"Bot {bot_id} not found")
+            parts = pair_key.split("|")
+            if len(parts) != 2:
+                raise ValueError(f"Invalid pair_key format: {pair_key}")
+            bot.set_pair_enabled(tuple(parts), enabled)
+
+    def get_bot_pairs(self, bot_id: int) -> list[dict] | None:
+        bot = self._bots.get(bot_id)
+        if bot is None:
+            return None
+        return bot.get_pair_states()
 
     async def stop_all(self) -> None:
         async with self._lock:

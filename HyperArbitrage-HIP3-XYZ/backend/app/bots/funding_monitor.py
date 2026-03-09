@@ -9,16 +9,15 @@ logger = get_logger("bots.funding_monitor")
 
 class FundingMonitor:
     __slots__ = (
-        "bot_id", "_hl_info", "_threshold", "_funding_a", "_funding_b",
-        "_net_funding", "_blocked", "_update_interval",
+        "bot_id", "_hl_info", "_threshold",
+        "_funding_rates", "_net_funding", "_blocked", "_update_interval",
     )
 
     def __init__(self, bot_id: int, hl_info: object, threshold: float = 0.5) -> None:
         self.bot_id = bot_id
         self._hl_info = hl_info
         self._threshold = Decimal(str(threshold))
-        self._funding_a = Decimal("0")
-        self._funding_b = Decimal("0")
+        self._funding_rates: dict[str, Decimal] = {}
         self._net_funding = Decimal("0")
         self._blocked = False
         self._update_interval = 60
@@ -33,37 +32,39 @@ class FundingMonitor:
 
     @property
     def funding_a(self) -> Decimal:
-        return self._funding_a
+        return self._funding_rates.get("_last_a", Decimal("0"))
 
     @property
     def funding_b(self) -> Decimal:
-        return self._funding_b
+        return self._funding_rates.get("_last_b", Decimal("0"))
 
-    async def update(self, asset_a: str, asset_b: str) -> None:
+    async def update(self, assets: list[str]) -> None:
+        """Fetch funding rates for all tracked assets."""
         try:
-            # SDK Info.meta() is synchronous — run in a thread
-            meta_a = await asyncio.to_thread(self._hl_info.meta)
-            funding_rates = {}
-            for asset_info in meta_a.get("universe", []):
+            meta = await asyncio.to_thread(self._hl_info.meta)
+            funding_map: dict[str, Decimal] = {}
+            for asset_info in meta.get("universe", []):
                 name = asset_info.get("name", "")
                 funding = asset_info.get("funding", "0")
-                funding_rates[name] = Decimal(str(funding))
+                funding_map[name] = Decimal(str(funding))
 
-            self._funding_a = funding_rates.get(asset_a, Decimal("0"))
-            self._funding_b = funding_rates.get(asset_b, Decimal("0"))
-            self._net_funding = self._funding_a - self._funding_b
+            self._funding_rates = funding_map
 
-            self._blocked = (
-                self._net_funding < 0
-                and abs(self._net_funding) > self._threshold
-            )
+            # Check if ANY pair has unfavorable funding above threshold
+            # Global block: if any asset has extreme funding, block all entries
+            blocked = False
+            for asset in assets:
+                rate = funding_map.get(asset, Decimal("0"))
+                if abs(rate) > self._threshold:
+                    blocked = True
+                    break
+
+            self._blocked = blocked
 
             logger.info(
                 "funding_updated",
                 bot_id=self.bot_id,
-                funding_a=str(self._funding_a),
-                funding_b=str(self._funding_b),
-                net_funding=str(self._net_funding),
+                tracked_assets=len(assets),
                 blocked=self._blocked,
             )
 
@@ -92,10 +93,35 @@ class FundingMonitor:
         threshold_8h = Decimal("0.001")
         return abs(self._net_funding) > threshold_8h
 
-    async def run_loop(self, asset_a: str, asset_b: str, stop_event: asyncio.Event) -> None:
-        while not stop_event.is_set():
-            await self.update(asset_a, asset_b)
+    async def run_loop(
+        self,
+        assets: list[str] | str,
+        stop_event: asyncio.Event,
+        asset_b: str | None = None,
+    ) -> None:
+        """Run funding monitor loop.
+
+        Supports both old signature (asset_a, asset_b, stop_event) for backward
+        compat and new signature (assets_list, stop_event).
+        """
+        # Handle backward-compatible call: run_loop(asset_a, stop_event) won't work
+        # but run_loop(asset_a, asset_b, stop_event) will via the old positional args
+        if isinstance(assets, str):
+            # Old-style call: run_loop("xyz:TSLA", stop_event_or_asset_b, ...)
+            if isinstance(stop_event, str):
+                # run_loop(asset_a, asset_b, stop_event)
+                asset_list = [assets, stop_event]
+                actual_stop_event = asset_b
+            else:
+                asset_list = [assets]
+                actual_stop_event = stop_event
+        else:
+            asset_list = assets
+            actual_stop_event = stop_event
+
+        while not actual_stop_event.is_set():
+            await self.update(asset_list)
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=self._update_interval)
+                await asyncio.wait_for(actual_stop_event.wait(), timeout=self._update_interval)
             except asyncio.TimeoutError:
                 pass

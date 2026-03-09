@@ -205,6 +205,15 @@ function StatBox({ label, value, className = "" }: { label: string; value: any; 
   );
 }
 
+interface PairState {
+  symbol: string;
+  pair_a: string;
+  pair_b: string;
+  enabled: boolean;
+  live_edge: number | null;
+  sample_count: number;
+}
+
 function BotColumn({
   bot, onAction, onConfigUpdate, onWalletSet, editingWallet, setEditingWallet, walletInput, setWalletInput,
 }: {
@@ -221,6 +230,37 @@ function BotColumn({
   const [localConfig, setLocalConfig] = useState(bot.config);
   const [dirty, setDirty] = useState(false);
   const serverConfigRef = useRef<string | null>(null);
+  const [pairs, setPairs] = useState<PairState[]>([]);
+  const [showPairs, setShowPairs] = useState(false);
+
+  // Fetch pairs for this bot
+  useEffect(() => {
+    const fetchPairs = () => {
+      fetch(`${API_URL}/api/v1/bots/${bot.id}/pairs`)
+        .then((r) => r.json())
+        .then((d) => { if (d.pairs) setPairs(d.pairs); })
+        .catch(() => {});
+    };
+    fetchPairs();
+    const interval = setInterval(fetchPairs, 5000);
+    return () => clearInterval(interval);
+  }, [bot.id]);
+
+  const handlePairToggle = useCallback((pairA: string, pairB: string, enabled: boolean) => {
+    const pairKey = `${pairA}|${pairB}`;
+    // Optimistic update
+    setPairs((prev) =>
+      prev.map((p) =>
+        p.pair_a === pairA && p.pair_b === pairB ? { ...p, enabled } : p
+      )
+    );
+    // Send to API
+    fetch(`${API_URL}/api/v1/bots/${bot.id}/config`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pair_toggles: { [pairKey]: enabled } }),
+    }).catch(console.error);
+  }, [bot.id]);
 
   useEffect(() => {
     const serverJson = JSON.stringify(bot.config);
@@ -313,6 +353,85 @@ function BotColumn({
         </div>
       </div>
 
+      {/* Pair Toggles */}
+      {pairs.length > 0 && (
+        <div className="bg-bg-surface rounded-xl border border-bg-border overflow-hidden">
+          <button
+            onClick={() => setShowPairs(!showPairs)}
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-bg-border/30 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <div className={cn("w-1 h-4 rounded", ec.tag)} />
+              <span className="text-xs font-bold text-text-primary uppercase">
+                Pair Scanner
+              </span>
+              <span className="text-[10px] text-text-secondary">
+                ({pairs.filter((p) => p.enabled).length}/{pairs.length} active)
+              </span>
+            </div>
+            <span className="text-text-secondary text-xs">{showPairs ? "Hide" : "Show"}</span>
+          </button>
+          {showPairs && (
+            <div className="border-t border-bg-border px-4 py-3 space-y-1.5">
+              {pairs.map((pair) => {
+                const deployerPrefix = pair.pair_b.split(":")[0]?.toUpperCase() || "";
+                const pairColor = EXCHANGE_COLORS[deployerPrefix] || EXCHANGE_COLORS.FLX;
+                return (
+                  <div
+                    key={`${pair.pair_a}|${pair.pair_b}`}
+                    className={cn(
+                      "flex items-center justify-between px-3 py-2 rounded-lg border transition-colors",
+                      pair.enabled
+                        ? "bg-bg-primary border-bg-border"
+                        : "bg-bg-primary/50 border-bg-border/50 opacity-60"
+                    )}
+                  >
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handlePairToggle(pair.pair_a, pair.pair_b, !pair.enabled)}
+                        className={cn(
+                          "w-8 h-4 rounded-full transition-colors relative",
+                          pair.enabled ? "bg-accent-green" : "bg-gray-700"
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform",
+                            pair.enabled ? "left-4" : "left-0.5"
+                          )}
+                        />
+                      </button>
+                      <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded", pairColor.bg, pairColor.text)}>
+                        {deployerPrefix}
+                      </span>
+                      <span className="text-xs font-mono text-text-primary font-semibold">
+                        {pair.symbol}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] text-text-secondary">
+                        {pair.sample_count} samples
+                      </span>
+                      {pair.live_edge !== null && (
+                        <span
+                          className={cn(
+                            "text-xs font-mono font-semibold",
+                            pair.live_edge > 0 ? "text-accent-green" : "text-accent-red"
+                          )}
+                        >
+                          {pair.live_edge > 0 ? "+" : ""}
+                          {pair.live_edge.toFixed(1)} bps
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Config */}
       <div className="bg-bg-surface rounded-xl border border-bg-border p-4">
         <div className="flex items-center gap-2 mb-4">
@@ -385,7 +504,7 @@ function BotColumn({
                 onChange={(e) => updateLocal("timer", e.target.value)}
                 className="w-full px-2 py-1.5 text-xs bg-bg-primary border border-bg-border rounded-md text-text-primary font-mono"
               >
-                {["1h", "6h", "12h", "24h"].map((t) => <option key={t} value={t}>{t}</option>)}
+                {["1h", "6h", "12h", "24h", "7d"].map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
           </div>
