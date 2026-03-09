@@ -21,6 +21,15 @@ const TIER_COLORS = {
   N: 'bg-amber-500',
 };
 
+function interpPercentile(stats, pct, dir) {
+  const p10 = stats?.[`p10_${dir}`], p50 = stats?.[`p50_${dir}`], p90 = stats?.[`p90_${dir}`];
+  if (p50 == null) return null;
+  if (pct <= 0.10) return p10;
+  if (pct <= 0.50) return p10 != null ? p10 + (p50 - p10) * ((pct - 0.10) / 0.40) : p50;
+  if (pct <= 0.90) return p50 + ((p90 ?? p50) - p50) * ((pct - 0.50) / 0.40);
+  return p90;
+}
+
 // ─── Default 6-bot definitions (client-side fallback) ─────
 const DEFAULT_METRICS = {
   pnl_net: 0, fees: 0, volume: 0, open: 0, closed: 0,
@@ -63,6 +72,7 @@ export default function BotsPanel() {
   const [walletInput, setWalletInput] = useState('');
   const [logs, setLogs] = useState([]);
   const [showLogs, setShowLogs] = useState(true);
+  const [spreadStats, setSpreadStats] = useState({});
 
   const fetchData = useCallback(() => {
     fetch('/api/bots')
@@ -90,6 +100,32 @@ export default function BotsPanel() {
     const interval = setInterval(() => { fetchData(); fetchLogs(); }, 3000);
     return () => clearInterval(interval);
   }, [fetchData, fetchLogs]);
+
+  // Fetch spread stats every 30s for pair toggle percentile display
+  useEffect(() => {
+    const fetchSpreadStats = () => {
+      fetch('/api/stats/all?window=6h')
+        .then(r => r.json())
+        .then(d => {
+          if (d.pairs) {
+            const map = {};
+            for (const p of d.pairs) {
+              const coin = p.pair_a.split(':')[1];
+              const dex = p.pair_b.split(':')[0];
+              map[`${dex}|${coin}`] = {
+                p10_d1: p.direction_1?.p10, p50_d1: p.direction_1?.p50, p90_d1: p.direction_1?.p90,
+                p10_d2: p.direction_2?.p10, p50_d2: p.direction_2?.p50, p90_d2: p.direction_2?.p90,
+              };
+            }
+            setSpreadStats(map);
+          }
+        })
+        .catch(() => {});
+    };
+    fetchSpreadStats();
+    const iv = setInterval(fetchSpreadStats, 30000);
+    return () => clearInterval(iv);
+  }, []);
 
   const handleAction = useCallback((botId, action) => {
     fetch('/api/bots', {
@@ -227,6 +263,7 @@ export default function BotsPanel() {
           <BotColumn
             key={bot.id}
             bot={bot}
+            spreadStats={spreadStats}
             onAction={handleAction}
             onConfigUpdate={handleConfigUpdate}
             onWalletSet={handleWalletSet}
@@ -307,7 +344,7 @@ function CounterChip({ label, value, color }) {
 }
 
 // ─── Bot Column (full section) ──────────────────────────────
-function BotColumn({ bot, onAction, onConfigUpdate, onWalletSet, onApiKeySet, onPairToggle, onTiersToggle, editingWallet, setEditingWallet, walletInput, setWalletInput }) {
+function BotColumn({ bot, spreadStats, onAction, onConfigUpdate, onWalletSet, onApiKeySet, onPairToggle, onTiersToggle, editingWallet, setEditingWallet, walletInput, setWalletInput }) {
   const ec = EXCHANGE_COLORS[bot.exchange] || EXCHANGE_COLORS.FLX;
   const [localConfig, setLocalConfig] = useState(bot.config);
   const [dirty, setDirty] = useState(false);
@@ -565,22 +602,37 @@ function BotColumn({ bot, onAction, onConfigUpdate, onWalletSet, onApiKeySet, on
       <div className="bg-bg-card rounded-xl border border-bg-border p-4">
         <div className="flex items-center justify-between mb-3">
           <span className="text-xs font-bold text-gray-200 uppercase">Pair Toggles</span>
-          <label className="flex items-center gap-1.5 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={bot.tiers_enabled ?? true}
-              onChange={e => onTiersToggle(bot.id, e.target.checked)}
-              className="w-3.5 h-3.5 rounded border-bg-border accent-accent-blue"
-            />
-            <span className="text-[10px] font-semibold text-gray-200">TIERS</span>
-          </label>
+          <div className="flex items-center gap-3">
+            <span className="text-[9px] font-mono text-gray-500">
+              P{Math.round((bot.config?.percentile ?? 0.75) * 100)}
+            </span>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={bot.tiers_enabled ?? true}
+                onChange={e => onTiersToggle(bot.id, e.target.checked)}
+                className="w-3.5 h-3.5 rounded border-bg-border accent-accent-blue"
+              />
+              <span className="text-[10px] font-semibold text-gray-200">TIERS</span>
+            </label>
+          </div>
         </div>
 
         <div className="space-y-1.5">
-          {(bot.pairs || []).map((pair, idx) => (
+          {(bot.pairs || []).map((pair, idx) => {
+            const ssKey = `${bot.pair_b}|${pair.symbol}`;
+            const ss = spreadStats?.[ssKey];
+            const pct = bot.config?.percentile ?? 0.75;
+            const dir = bot.direction === 'long' ? 'd1' : 'd2';
+            const spreadBps = interpPercentile(ss, pct, dir);
+            return (
             <div key={pair.symbol} className="flex items-center gap-2 py-1 px-2 rounded-md hover:bg-bg-primary/50">
               <span className={`text-xs font-mono flex-1 ${pair.enabled ? (bot.exchange === 'CASH' ? 'text-blue-400' : bot.exchange === 'KM' ? 'text-emerald-400' : 'text-orange-400') : 'text-gray-600'}`}>
                 {bot.pair_b}/xyz {pair.symbol}
+              </span>
+              {/* Spread percentile value */}
+              <span className={`text-[10px] font-mono w-12 text-right ${spreadBps != null && spreadBps > 5 ? 'text-accent-green' : 'text-gray-500'}`}>
+                {spreadBps != null ? `${spreadBps.toFixed(1)}` : '--'}
               </span>
               {/* Tier indicator */}
               {pair.tier && (
@@ -599,7 +651,8 @@ function BotColumn({ bot, onAction, onConfigUpdate, onWalletSet, onApiKeySet, on
               <span className="text-[10px] font-mono text-gray-500 w-5 text-center">{pair.z ?? ''}</span>
               <span className="text-[10px] font-mono text-gray-500 w-6 text-center">{pair.bh ?? ''}</span>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
