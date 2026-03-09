@@ -211,7 +211,7 @@ export default function DashboardPage() {
                 Overview
               </Link>
               <Link
-                href="/bots"
+                href="/overview?tab=bots"
                 className="px-3 py-1 text-xs text-gray-500 hover:text-gray-300 border border-bg-border rounded-md transition-colors"
               >
                 Bots

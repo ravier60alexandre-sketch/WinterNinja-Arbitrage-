@@ -1,12 +1,26 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import OverviewTable from '../../components/OverviewTable';
+import BotsPanel from '../../components/BotsPanel';
 
 const WINDOWS = ['1h', '6h', '12h', '24h', '7d'];
 
 export default function OverviewPage() {
+  return (
+    <Suspense>
+      <OverviewPageInner />
+    </Suspense>
+  );
+}
+
+function OverviewPageInner() {
+  const searchParams = useSearchParams();
+  const initialTab = searchParams.get('tab') === 'bots' ? 'bots' : 'overview';
+
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [window, setWindow] = useState('24h');
   const [data, setData] = useState(null);
   const [liveSpreads, setLiveSpreads] = useState({});
@@ -108,36 +122,49 @@ export default function OverviewPage() {
               >
                 Detail View
               </Link>
-              <span className="px-3 py-1 text-xs bg-accent-blue/20 text-accent-blue border border-accent-blue/30 rounded-md">
+              <button
+                onClick={() => setActiveTab('overview')}
+                className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                  activeTab === 'overview'
+                    ? 'bg-accent-blue/20 text-accent-blue border border-accent-blue/30'
+                    : 'text-gray-500 hover:text-gray-300 border border-bg-border'
+                }`}
+              >
                 Overview
-              </span>
-              <Link
-                href="/bots"
-                className="px-3 py-1 text-xs text-gray-500 hover:text-gray-300 border border-bg-border rounded-md transition-colors"
+              </button>
+              <button
+                onClick={() => setActiveTab('bots')}
+                className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                  activeTab === 'bots'
+                    ? 'bg-accent-blue/20 text-accent-blue border border-accent-blue/30'
+                    : 'text-gray-500 hover:text-gray-300 border border-bg-border'
+                }`}
               >
                 Bots
-              </Link>
+              </button>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Window selector */}
-            <div className="flex bg-bg-primary rounded-lg p-0.5">
-              {WINDOWS.map((w, i) => (
-                <button
-                  key={w}
-                  onClick={() => setWindow(w)}
-                  className={`px-3 py-1 text-xs rounded-md transition-colors ${
-                    window === w
-                      ? 'bg-accent-blue text-white'
-                      : 'text-gray-500 hover:text-gray-300'
-                  }`}
-                  title={`Press ${i + 1}`}
-                >
-                  {w}
-                </button>
-              ))}
-            </div>
+            {/* Window selector (only show for overview tab) */}
+            {activeTab === 'overview' && (
+              <div className="flex bg-bg-primary rounded-lg p-0.5">
+                {WINDOWS.map((w, i) => (
+                  <button
+                    key={w}
+                    onClick={() => setWindow(w)}
+                    className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                      window === w
+                        ? 'bg-accent-blue text-white'
+                        : 'text-gray-500 hover:text-gray-300'
+                    }`}
+                    title={`Press ${i + 1}`}
+                  >
+                    {w}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Connection status */}
             <div className="flex items-center gap-1.5">
@@ -147,23 +174,25 @@ export default function OverviewPage() {
               </span>
             </div>
 
-            {/* Manual stats refresh */}
-            <button
-              onClick={fetchStats}
-              className="px-2 py-1 text-xs text-gray-500 hover:text-gray-300 border border-bg-border rounded transition-colors"
-            >
-              Refresh Stats
-            </button>
+            {/* Manual stats refresh (only for overview) */}
+            {activeTab === 'overview' && (
+              <button
+                onClick={fetchStats}
+                className="px-2 py-1 text-xs text-gray-500 hover:text-gray-300 border border-bg-border rounded transition-colors"
+              >
+                Refresh Stats
+              </button>
+            )}
 
             {/* Status */}
             <div className="text-[10px] text-gray-600 font-mono">
               {lastLiveUpdate && (
                 <span className="text-accent-green">Live {lastLiveUpdate.toLocaleTimeString()}</span>
               )}
-              {lastRefresh && (
+              {activeTab === 'overview' && lastRefresh && (
                 <span className="ml-2">Stats {lastRefresh.toLocaleTimeString()}</span>
               )}
-              {loading && <span className="ml-2 text-accent-amber">loading...</span>}
+              {activeTab === 'overview' && loading && <span className="ml-2 text-accent-amber">loading...</span>}
             </div>
           </div>
         </div>
@@ -171,18 +200,23 @@ export default function OverviewPage() {
 
       {/* Content */}
       <main className="max-w-[1800px] mx-auto px-4 py-6">
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-semibold text-gray-300">
-              All Pairs — Rolling Stats <span className="text-accent-blue font-mono">{window}</span>
-            </h2>
-            <p className="text-[10px] text-gray-600 mt-1">
-              Fees: {feeThreshold.toFixed(1)} bps round-trip · Live spreads via SSE (real-time) · Stats refresh every 30s
-            </p>
-          </div>
-        </div>
-
-        <OverviewTable data={data} liveSpreads={liveSpreads} feeThreshold={feeThreshold} />
+        {activeTab === 'overview' ? (
+          <>
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-300">
+                  All Pairs — Rolling Stats <span className="text-accent-blue font-mono">{window}</span>
+                </h2>
+                <p className="text-[10px] text-gray-600 mt-1">
+                  Fees: {feeThreshold.toFixed(1)} bps round-trip · Live spreads via SSE (real-time) · Stats refresh every 30s
+                </p>
+              </div>
+            </div>
+            <OverviewTable data={data} liveSpreads={liveSpreads} feeThreshold={feeThreshold} />
+          </>
+        ) : (
+          <BotsPanel />
+        )}
       </main>
 
       {/* Footer */}
@@ -190,7 +224,7 @@ export default function OverviewPage() {
         <div className="max-w-[1800px] mx-auto px-4 flex items-center justify-between text-xs text-gray-600">
           <span>HiP-3 Spread Analyzer — Hyperliquid</span>
           <span className="font-mono">
-            Keys: 1-5 windows
+            {activeTab === 'overview' ? 'Keys: 1-5 windows' : '6-Bot Deployer Router'}
           </span>
         </div>
       </footer>
