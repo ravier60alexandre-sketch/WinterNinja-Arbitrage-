@@ -41,7 +41,8 @@ class FundingMonitor:
 
     async def update(self, asset_a: str, asset_b: str) -> None:
         try:
-            meta_a = self._hl_info.meta()
+            # SDK Info.meta() is synchronous — run in a thread
+            meta_a = await asyncio.to_thread(self._hl_info.meta)
             funding_rates = {}
             for asset_info in meta_a.get("universe", []):
                 name = asset_info.get("name", "")

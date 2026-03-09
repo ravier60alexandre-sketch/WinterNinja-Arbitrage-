@@ -14,24 +14,34 @@ from app.services.deployer_perps import DeployerRegistry, load_deployer_perps, p
 logger = get_logger("bots.bot_manager")
 
 
-def _create_hl_exchange(api_key_decrypted: str, is_mainnet: bool, account_address: str | None = None):
+def _create_hl_exchange(
+    api_key_decrypted: str,
+    is_mainnet: bool,
+    account_address: str | None = None,
+    vault_address: str | None = None,
+):
     """Create a Hyperliquid Exchange instance for a bot.
 
     Args:
-        account_address: The address to trade on behalf of (sub-account or main).
-            When set, the SDK signs orders for *wallet* but targets *account_address*.
+        account_address: The main wallet address the agent key is authorised to
+            trade on behalf of.
+        vault_address: Optional sub-account / vault address for isolated trading.
     """
     try:
         import eth_account
         from hyperliquid.exchange import Exchange
         from hyperliquid.utils import constants
         base_url = constants.MAINNET_API_URL if is_mainnet else constants.TESTNET_API_URL
-        # The SDK expects an eth_account.Account object, not a raw hex key
         key = api_key_decrypted
         if key.startswith("0x"):
             key = key[2:]
         wallet = eth_account.Account.from_key(key)
-        return Exchange(wallet=wallet, base_url=base_url, account_address=account_address)
+        return Exchange(
+            wallet=wallet,
+            base_url=base_url,
+            account_address=account_address,
+            vault_address=vault_address,
+        )
     except ImportError:
         logger.warning("hyperliquid_sdk_not_available", msg="Using None exchange — install hyperliquid-python-sdk")
         return None
@@ -108,13 +118,19 @@ class BotManager:
 
             is_mainnet = settings.HL_MAINNET
             api_key_decrypted = decrypt_api_key(bot_model.api_key_encrypted)
-            # Trade on sub-account when configured, otherwise main wallet
-            trading_address = bot_model.sub_account_address or bot_model.account_address
-            exchange = _create_hl_exchange(api_key_decrypted, is_mainnet, account_address=trading_address)
+            exchange = _create_hl_exchange(
+                api_key_decrypted,
+                is_mainnet,
+                account_address=bot_model.account_address,
+                vault_address=bot_model.sub_account_address,
+            )
             hl_info = _create_hl_info(is_mainnet)
 
             # Patch SDK with deployer perp indices so HiP-3 orders work
             self._patch_exchange_sdk(exchange, hl_info)
+
+            # The address used for fee lookups etc.
+            trading_address = bot_model.sub_account_address or bot_model.account_address
 
             instance = BotInstance(
                 bot_id=bot_model.id,
@@ -123,6 +139,7 @@ class BotManager:
                 pair_b=bot_model.pair_b,
                 direction=bot_model.direction,
                 account_address=bot_model.account_address,
+                trading_address=trading_address,
                 exchange=exchange,
                 hl_info=hl_info,
                 config=config,

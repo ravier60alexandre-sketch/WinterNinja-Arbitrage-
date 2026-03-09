@@ -1,3 +1,4 @@
+import asyncio
 import time
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -36,7 +37,8 @@ class FeeCalculator:
                 return fee
 
         try:
-            user_fees = self._hl_info.user_fees(account_address)
+            # SDK Info.user_fees() is synchronous — run in a thread
+            user_fees = await asyncio.to_thread(self._hl_info.user_fees, account_address)
             taker_rate = Decimal(str(user_fees.get("taker", "0.00035")))
             hip3_fee = (taker_rate * 2).quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP)
 

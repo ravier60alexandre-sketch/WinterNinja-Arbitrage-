@@ -5,6 +5,9 @@ from app.core.logging import get_logger
 
 logger = get_logger("bots.position_manager")
 
+# Default slippage for market_close (5%)
+_MARKET_CLOSE_SLIPPAGE = 0.05
+
 
 class PositionManager:
     __slots__ = ("bot_id", "_exchange", "_exit_mode", "_max_close_retries")
@@ -61,24 +64,23 @@ class PositionManager:
         side_b: str,
         size_b: Decimal,
     ) -> bool:
+        """Close both legs via market_close (SDK is synchronous)."""
         for attempt in range(self._max_close_retries):
             try:
-                results = await asyncio.gather(
-                    self._exchange.place_order(
-                        asset=asset_a,
-                        is_buy=(side_a == "buy"),
-                        sz=float(size_a),
-                        limit_px=0,
-                        order_type={"limit": {"tif": "Ioc"}},
-                        reduce_only=True,
+                await asyncio.gather(
+                    asyncio.to_thread(
+                        self._exchange.market_close,
+                        asset_a,
+                        float(size_a),
+                        None,
+                        _MARKET_CLOSE_SLIPPAGE,
                     ),
-                    self._exchange.place_order(
-                        asset=asset_b,
-                        is_buy=(side_b == "buy"),
-                        sz=float(size_b),
-                        limit_px=0,
-                        order_type={"limit": {"tif": "Ioc"}},
-                        reduce_only=True,
+                    asyncio.to_thread(
+                        self._exchange.market_close,
+                        asset_b,
+                        float(size_b),
+                        None,
+                        _MARKET_CLOSE_SLIPPAGE,
                     ),
                 )
                 logger.info(
@@ -101,21 +103,14 @@ class PositionManager:
                     await asyncio.sleep(0.2 * (attempt + 1))
 
         logger.error("close_position_failed_forcing_market", bot_id=self.bot_id)
-        return await self._force_market_close(asset_a, side_a, size_a, asset_b, side_b, size_b)
+        return await self._force_market_close(asset_a, asset_b)
 
-    async def _force_market_close(
-        self,
-        asset_a: str,
-        side_a: str,
-        size_a: Decimal,
-        asset_b: str,
-        side_b: str,
-        size_b: Decimal,
-    ) -> bool:
+    async def _force_market_close(self, asset_a: str, asset_b: str) -> bool:
+        """Last resort: close everything for these coins regardless of size."""
         try:
             await asyncio.gather(
-                self._exchange.market_close(asset_a),
-                self._exchange.market_close(asset_b),
+                asyncio.to_thread(self._exchange.market_close, asset_a),
+                asyncio.to_thread(self._exchange.market_close, asset_b),
             )
             logger.info("forced_market_close_success", bot_id=self.bot_id)
             return True

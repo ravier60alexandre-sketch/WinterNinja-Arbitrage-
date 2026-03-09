@@ -2,6 +2,7 @@ import asyncio
 import time
 from decimal import ROUND_HALF_UP, Decimal
 from dataclasses import dataclass
+from functools import partial
 
 from app.core.exceptions import OrderExecutionError, SlippageExceededError
 from app.core.logging import get_logger
@@ -93,22 +94,35 @@ class OrderExecutor:
         for attempt in range(self._max_retries):
             try:
                 start_ns = time.perf_counter_ns()
-                result = await self._exchange.place_order(
-                    asset=asset,
-                    is_buy=(side == "buy"),
-                    sz=float(size),
-                    limit_px=float(price),
-                    order_type={"limit": {"tif": "Ioc"}},
+                # SDK Exchange.order() is synchronous — run in a thread
+                result = await asyncio.to_thread(
+                    self._exchange.order,
+                    asset,                          # name
+                    side == "buy",                  # is_buy
+                    float(size),                    # sz
+                    float(price),                   # limit_px
+                    {"limit": {"tif": "Ioc"}},      # order_type
                 )
 
-                order_id = str(result.get("response", {}).get("data", {}).get("statuses", [{}])[0].get("resting", {}).get("oid", ""))
-                filled = result.get("response", {}).get("data", {}).get("statuses", [{}])[0].get("filled", None) is not None
+                # Parse SDK response
+                statuses = (
+                    result.get("response", {})
+                    .get("data", {})
+                    .get("statuses", [{}])
+                )
+                first = statuses[0] if statuses else {}
 
-                if not order_id and filled:
-                    order_id = str(result.get("response", {}).get("data", {}).get("statuses", [{}])[0].get("filled", {}).get("oid", ""))
+                filled_info = first.get("filled")
+                filled = filled_info is not None
+
+                order_id = ""
+                if filled and filled_info:
+                    order_id = str(filled_info.get("oid", ""))
+                if not order_id:
+                    order_id = str(first.get("resting", {}).get("oid", ""))
 
                 fill_price = Decimal(str(
-                    result.get("response", {}).get("data", {}).get("statuses", [{}])[0].get("filled", {}).get("avgPx", price)
+                    filled_info.get("avgPx", price) if filled_info else price
                 ))
 
                 return OrderResult(

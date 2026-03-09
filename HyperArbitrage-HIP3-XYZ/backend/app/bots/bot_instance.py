@@ -26,6 +26,7 @@ class BotInstance(BaseBot):
         pair_b: str,
         direction: str,
         account_address: str,
+        trading_address: str,
         exchange: object,
         hl_info: object,
         config: dict,
@@ -35,6 +36,7 @@ class BotInstance(BaseBot):
         self.pair_b = pair_b
         self.direction = direction
         self.account_address = account_address
+        self.trading_address = trading_address
         self._exchange = exchange
         self._hl_info = hl_info
         self._config = config
@@ -52,11 +54,18 @@ class BotInstance(BaseBot):
         self._tasks: list[asyncio.Task] = []
         self._has_open_position = False
         self._open_trade: dict | None = None
+        self._last_fee_refresh: float = 0.0
 
     async def start(self) -> None:
         await self.transition(BotState.CONNECTING, "user_start")
 
         try:
+            # Pre-populate fee cache so _tick() has real values
+            await self.fee_calculator.compute_roundtrip_fees(
+                self.pair_a, self.pair_b, self.trading_address,
+            )
+            self._last_fee_refresh = time.time()
+
             await self.transition(BotState.RUNNING, "connected")
 
             self._stop_event.clear()
@@ -134,6 +143,14 @@ class BotInstance(BaseBot):
         if target_percentile is None:
             return
 
+        # Refresh fees every 60 seconds
+        now = time.time()
+        if now - self._last_fee_refresh > 60:
+            await self.fee_calculator.compute_roundtrip_fees(
+                self.pair_a, self.pair_b, self.trading_address,
+            )
+            self._last_fee_refresh = now
+
         fees_roundtrip = await self.fee_calculator.get_fees_roundtrip(self.pair_a, self.pair_b)
 
         max_slippage_ticks = self._config.get("max_slippage_ticks", 2)
@@ -205,6 +222,7 @@ class BotInstance(BaseBot):
         if self._config.get("one_leg_protection", True):
             success, status = await self.one_leg_guard.monitor_fills(
                 result_a.order_id, result_b.order_id, self._fill_queue,
+                asset_a=self.pair_a, asset_b=self.pair_b,
             )
             if not success:
                 logger.warning("entry_one_leg", bot_id=self.bot_id, status=status)
