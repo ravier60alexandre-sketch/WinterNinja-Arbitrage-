@@ -77,6 +77,12 @@ class BotManager:
                 on_trade_callback=self._on_trade,
             )
 
+            # Set enabled pairs from exchange config
+            exchange = defn.get("exchange", "")
+            exchange_pairs = EXCHANGE_PAIRS.get(exchange, [])
+            enabled_symbols = [p["symbol"] for p in exchange_pairs if p.get("enabled", True)]
+            engine.set_enabled_pairs(enabled_symbols)
+
             # Load persisted metrics
             saved_metrics = self._load_metrics(bot_id)
             if saved_metrics:
@@ -85,7 +91,7 @@ class BotManager:
             self._bots[bot_id] = engine
 
             has_creds = bool(account and api_key)
-            logger.info(f"Bot {bot_id} ({defn['name']}) loaded — credentials={'YES' if has_creds else 'MISSING'}")
+            logger.info(f"Bot {bot_id} ({defn['name']}) loaded — credentials={'YES' if has_creds else 'MISSING'} — {len(enabled_symbols)} pairs")
 
     def _load_config(self, bot_id: int) -> BotConfig:
         try:

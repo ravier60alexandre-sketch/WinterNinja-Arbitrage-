@@ -1,14 +1,17 @@
 """
 Bot trading engine — connects to Hyperliquid, monitors spreads,
 executes pair trades with all safety protections.
+
+Each bot monitors multiple coin pairs (SILVER, TSLA, etc.) across two
+HiP-3 deployers (e.g., xyz vs cash). WebSocket subscriptions use the
+Hyperliquid format: deployer:COIN (e.g., xyz:SILVER, cash:SILVER).
 """
 import asyncio
 import json
 import logging
-import os
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from enum import Enum
@@ -22,6 +25,14 @@ TIMEFRAME_SECONDS = {"1h": 3600, "6h": 21600, "12h": 43200, "24h": 86400}
 _Q8 = Decimal("0.00000001")
 _Q2 = Decimal("0.01")
 DEFAULT_FEE_BPS = Decimal("0.0007")  # HIP-3 taker fee per leg
+
+# Map deployer labels to HiP-3 prefix (lowercase)
+DEPLOYER_PREFIX = {
+    "XYZ": "xyz",
+    "CASH": "cash",
+    "KM": "km",
+    "FLX": "flx",
+}
 
 
 class BotState(str, Enum):
@@ -39,6 +50,7 @@ class SpreadSample:
     spread: Decimal
     mid_a: Decimal
     mid_b: Decimal
+    coin: str  # which coin this sample is for
 
 
 @dataclass(slots=True)
@@ -162,8 +174,9 @@ class BotConfig:
 class BotEngine:
     """
     Full trading engine for one arbitrage bot.
-    Connects to Hyperliquid via SDK, subscribes to l2Book WebSocket,
-    calculates spreads, and executes pair trades.
+    Connects to Hyperliquid via SDK, subscribes to l2Book WebSocket
+    for all enabled pairs across two deployers, calculates spreads,
+    and executes pair trades.
     """
 
     def __init__(
@@ -181,8 +194,8 @@ class BotEngine:
     ):
         self.bot_id = bot_id
         self.name = name
-        self.pair_a = pair_a
-        self.pair_b = pair_b
+        self.pair_a = pair_a       # deployer A label (e.g., "XYZ")
+        self.pair_b = pair_b       # deployer B label (e.g., "CASH")
         self.direction = direction
         self.account_address = account_address
         self.api_key = api_key
@@ -190,19 +203,25 @@ class BotEngine:
         self.config = config or BotConfig()
         self.on_trade_callback = on_trade_callback
 
+        # HiP-3 deployer prefixes
+        self._prefix_a = DEPLOYER_PREFIX.get(pair_a, pair_a.lower())
+        self._prefix_b = DEPLOYER_PREFIX.get(pair_b, pair_b.lower())
+
         self.state = BotState.STOPPED
         self.metrics = BotMetrics()
+
+        # Enabled trading pairs (coin symbols like SILVER, TSLA, etc.)
+        self._enabled_pairs: list[str] = []
 
         # Hyperliquid SDK objects (created on start)
         self._exchange = None
         self._info = None
 
-        # Spread tracking
-        self._samples: deque[SpreadSample] = deque(maxlen=50_000)
+        # Spread tracking — per coin
+        self._samples: dict[str, deque[SpreadSample]] = {}
 
-        # Orderbook state
-        self._book_a: dict = {}  # {"bids": [...], "asks": [...]}
-        self._book_b: dict = {}
+        # Orderbook state — per HiP-3 symbol (e.g., "xyz:SILVER")
+        self._books: dict[str, dict] = {}
 
         # Open position tracking
         self._has_position = False
@@ -217,10 +236,26 @@ class BotEngine:
         self._stop_event = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
 
+    def set_enabled_pairs(self, pairs: list[str]):
+        """Set the list of enabled coin symbols (e.g., ['SILVER', 'TSLA', 'GOLD'])."""
+        self._enabled_pairs = pairs
+        for coin in pairs:
+            if coin not in self._samples:
+                self._samples[coin] = deque(maxlen=50_000)
+        logger.info(f"[Bot {self.bot_id}] Enabled pairs: {pairs}")
+
+    def _hip3_symbol(self, deployer_prefix: str, coin: str) -> str:
+        """Build HiP-3 symbol: deployer:COIN."""
+        return f"{deployer_prefix}:{coin}"
+
     # ── Hyperliquid Connection ──
 
     def _connect_exchange(self):
         """Create Hyperliquid Exchange + Info clients using the agent wallet pattern."""
+        if not self.account_address or not self.api_key:
+            logger.error(f"[Bot {self.bot_id}] No credentials configured — cannot connect")
+            return False
+
         try:
             import eth_account
             from hyperliquid.exchange import Exchange
@@ -258,23 +293,50 @@ class BotEngine:
     # ── Orderbook WebSocket ──
 
     async def _subscribe_orderbooks(self):
-        """Subscribe to l2Book WebSocket for both pairs."""
-        import websockets
+        """Subscribe to l2Book WebSocket for all enabled pairs on both deployers."""
+        try:
+            import websockets
+        except ImportError:
+            logger.error(f"[Bot {self.bot_id}] websockets library not installed")
+            return
+
+        if not self._enabled_pairs:
+            logger.warning(f"[Bot {self.bot_id}] No enabled pairs — skipping WS subscription")
+            return
 
         ws_url = "wss://api.hyperliquid.xyz/ws"
 
+        # Build list of all HiP-3 symbols to subscribe to
+        coins_to_sub = []
+        for coin in self._enabled_pairs:
+            sym_a = self._hip3_symbol(self._prefix_a, coin)
+            sym_b = self._hip3_symbol(self._prefix_b, coin)
+            coins_to_sub.append(sym_a)
+            coins_to_sub.append(sym_b)
+
+        logger.info(f"[Bot {self.bot_id}] Subscribing to {len(coins_to_sub)} l2Book channels: {coins_to_sub[:6]}...")
+
+        backoff = 3
+        max_backoff = 60
+
         while not self._stop_event.is_set():
             try:
-                async with websockets.connect(ws_url, ping_interval=20) as ws:
-                    # Subscribe to both pairs
-                    for coin in [self.pair_a, self.pair_b]:
+                async with websockets.connect(
+                    ws_url,
+                    ping_interval=20,
+                    ping_timeout=10,
+                    close_timeout=5,
+                ) as ws:
+                    # Subscribe to all coins
+                    for coin in coins_to_sub:
                         sub_msg = json.dumps({
                             "method": "subscribe",
                             "subscription": {"type": "l2Book", "coin": coin}
                         })
                         await ws.send(sub_msg)
 
-                    logger.info(f"[Bot {self.bot_id}] Subscribed to l2Book for {self.pair_a}, {self.pair_b}")
+                    logger.info(f"[Bot {self.bot_id}] WebSocket connected — subscribed to {len(coins_to_sub)} books")
+                    backoff = 3  # Reset backoff on success
 
                     async for raw_msg in ws:
                         if self._stop_event.is_set():
@@ -289,18 +351,16 @@ class BotEngine:
                                     "bids": [(float(l["px"]), float(l["sz"])) for l in levels[0][:10]],
                                     "asks": [(float(l["px"]), float(l["sz"])) for l in levels[1][:10]],
                                 }
-                                if coin == self.pair_a:
-                                    self._book_a = book
-                                elif coin == self.pair_b:
-                                    self._book_b = book
+                                self._books[coin] = book
                         except Exception as e:
                             logger.debug(f"[Bot {self.bot_id}] WS parse error: {e}")
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning(f"[Bot {self.bot_id}] WS disconnected: {e}, reconnecting in 3s...")
-                await asyncio.sleep(3)
+                logger.warning(f"[Bot {self.bot_id}] WS disconnected: {e}, reconnecting in {backoff}s...")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, max_backoff)
 
     def _mid_price(self, book: dict) -> float | None:
         bids = book.get("bids", [])
@@ -308,6 +368,14 @@ class BotEngine:
         if not bids or not asks:
             return None
         return (bids[0][0] + asks[0][0]) / 2
+
+    def _get_mids_for_coin(self, coin: str) -> tuple[float | None, float | None]:
+        """Get mid prices for a coin from both deployers."""
+        sym_a = self._hip3_symbol(self._prefix_a, coin)
+        sym_b = self._hip3_symbol(self._prefix_b, coin)
+        book_a = self._books.get(sym_a, {})
+        book_b = self._books.get(sym_b, {})
+        return self._mid_price(book_a), self._mid_price(book_b)
 
     # ── Funding Monitor ──
 
@@ -323,14 +391,18 @@ class BotEngine:
                         funding = float(asset_info.get("funding", "0"))
                         rates[name] = funding
 
-                    self._funding_a = rates.get(self.pair_a, 0.0)
-                    self._funding_b = rates.get(self.pair_b, 0.0)
-                    net = self._funding_a - self._funding_b
+                    # Check funding for each enabled pair
+                    for coin in self._enabled_pairs:
+                        sym_a = self._hip3_symbol(self._prefix_a, coin)
+                        sym_b = self._hip3_symbol(self._prefix_b, coin)
+                        self._funding_a = rates.get(sym_a, 0.0)
+                        self._funding_b = rates.get(sym_b, 0.0)
+                        net = self._funding_a - self._funding_b
 
-                    self._funding_blocked = (net < 0 and abs(net) > self.config.funding_rate_threshold)
+                        self._funding_blocked = (net < 0 and abs(net) > self.config.funding_rate_threshold)
 
-                    if self._funding_blocked:
-                        logger.info(f"[Bot {self.bot_id}] Funding blocked: net={net:.6f}")
+                        if self._funding_blocked:
+                            logger.info(f"[Bot {self.bot_id}] Funding blocked for {coin}: net={net:.6f}")
             except Exception as e:
                 logger.warning(f"[Bot {self.bot_id}] Funding check error: {e}")
 
@@ -341,7 +413,7 @@ class BotEngine:
 
     # ── Spread Calculation ──
 
-    def _add_spread_sample(self, mid_a: float, mid_b: float) -> SpreadSample:
+    def _add_spread_sample(self, coin: str, mid_a: float, mid_b: float) -> SpreadSample:
         if mid_b == 0:
             spread = Decimal("0")
         else:
@@ -352,14 +424,21 @@ class BotEngine:
             spread=spread,
             mid_a=Decimal(str(mid_a)),
             mid_b=Decimal(str(mid_b)),
+            coin=coin,
         )
-        self._samples.append(sample)
+        if coin not in self._samples:
+            self._samples[coin] = deque(maxlen=50_000)
+        self._samples[coin].append(sample)
         return sample
 
-    def _compute_percentile(self, timeframe: str) -> Decimal | None:
+    def _compute_percentile(self, coin: str, timeframe: str) -> Decimal | None:
+        samples = self._samples.get(coin)
+        if not samples:
+            return None
+
         seconds = TIMEFRAME_SECONDS.get(timeframe, 21600)
         cutoff = time.time() - seconds
-        spreads = [float(s.spread) for s in self._samples if s.timestamp >= cutoff]
+        spreads = [float(s.spread) for s in samples if s.timestamp >= cutoff]
 
         if len(spreads) < 10:
             return None
@@ -375,7 +454,7 @@ class BotEngine:
     # ── Order Execution ──
 
     async def _execute_pair_order(
-        self, side_a: str, side_b: str, size: float, mid_a: float, mid_b: float
+        self, coin: str, side_a: str, side_b: str, size: float, mid_a: float, mid_b: float
     ) -> tuple[OrderResult | None, OrderResult | None]:
         """Execute two orders simultaneously via bulk order."""
         if not self._exchange:
@@ -383,11 +462,13 @@ class BotEngine:
             self.metrics.errors += 1
             return None, None
 
-        tick_a = 0.01  # default tick size
+        sym_a = self._hip3_symbol(self._prefix_a, coin)
+        sym_b = self._hip3_symbol(self._prefix_b, coin)
+
+        tick_a = 0.01
         tick_b = 0.01
         slip_ticks = self.config.max_slippage_ticks
 
-        # Aggressive pricing
         if side_a == "buy":
             price_a = mid_a + (tick_a * slip_ticks)
         else:
@@ -400,9 +481,8 @@ class BotEngine:
 
         for attempt in range(self.config.order_retries):
             try:
-                # Execute both orders in parallel using bulk_orders
                 order_spec_a = {
-                    "coin": self.pair_a,
+                    "coin": sym_a,
                     "is_buy": side_a == "buy",
                     "sz": size,
                     "limit_px": round(price_a, 6),
@@ -410,7 +490,7 @@ class BotEngine:
                     "reduce_only": False,
                 }
                 order_spec_b = {
-                    "coin": self.pair_b,
+                    "coin": sym_b,
                     "is_buy": side_b == "buy",
                     "sz": size,
                     "limit_px": round(price_b, 6),
@@ -418,11 +498,10 @@ class BotEngine:
                     "reduce_only": False,
                 }
 
-                # Use bulk_orders for atomic execution
                 results = self._exchange.bulk_orders([order_spec_a, order_spec_b])
 
-                result_a = self._parse_order_result(results, 0, self.pair_a, side_a, size, mid_a)
-                result_b = self._parse_order_result(results, 1, self.pair_b, side_b, size, mid_b)
+                result_a = self._parse_order_result(results, 0, sym_a, side_a, size, mid_a)
+                result_b = self._parse_order_result(results, 1, sym_b, side_b, size, mid_b)
 
                 return result_a, result_b
 
@@ -466,7 +545,7 @@ class BotEngine:
 
     # ── One-Leg Guard ──
 
-    async def _one_leg_check(self, result_a: OrderResult, result_b: OrderResult) -> bool:
+    async def _one_leg_check(self, coin: str, result_a: OrderResult, result_b: OrderResult) -> bool:
         """Check if both legs filled. If only one filled, cancel and close."""
         if result_a.filled and result_b.filled:
             return True
@@ -474,40 +553,30 @@ class BotEngine:
         if not result_a.filled and not result_b.filled:
             return False
 
-        # One-leg situation
-        self.metrics.orphans += 1
-        logger.warning(f"[Bot {self.bot_id}] ONE-LEG detected! A={result_a.filled}, B={result_b.filled}")
+        sym_a = self._hip3_symbol(self._prefix_a, coin)
+        sym_b = self._hip3_symbol(self._prefix_b, coin)
 
-        # Try to cancel unfilled + market close filled
+        self.metrics.orphans += 1
+        logger.warning(f"[Bot {self.bot_id}] ONE-LEG detected on {coin}! A={result_a.filled}, B={result_b.filled}")
+
         try:
             if result_a.filled and not result_b.filled:
-                # Cancel B, close A
                 if result_b.order_id and self._exchange:
-                    self._exchange.cancel(self.pair_b, result_b.order_id)
-                # Market close A
+                    self._exchange.cancel(sym_b, result_b.order_id)
                 if self._exchange:
                     close_side = "sell" if result_a.side == "buy" else "buy"
                     self._exchange.order(
-                        self.pair_a,
-                        close_side == "buy",
-                        result_a.size,
-                        0,
-                        {"limit": {"tif": "Ioc"}},
-                        reduce_only=True,
+                        sym_a, close_side == "buy", result_a.size, 0,
+                        {"limit": {"tif": "Ioc"}}, reduce_only=True,
                     )
             else:
-                # Cancel A, close B
                 if result_a.order_id and self._exchange:
-                    self._exchange.cancel(self.pair_a, result_a.order_id)
+                    self._exchange.cancel(sym_a, result_a.order_id)
                 if self._exchange:
                     close_side = "sell" if result_b.side == "buy" else "buy"
                     self._exchange.order(
-                        self.pair_b,
-                        close_side == "buy",
-                        result_b.size,
-                        0,
-                        {"limit": {"tif": "Ioc"}},
-                        reduce_only=True,
+                        sym_b, close_side == "buy", result_b.size, 0,
+                        {"limit": {"tif": "Ioc"}}, reduce_only=True,
                     )
         except Exception as e:
             logger.error(f"[Bot {self.bot_id}] One-leg cleanup error: {e}")
@@ -536,35 +605,63 @@ class BotEngine:
                 await asyncio.sleep(1.0)
 
     async def _tick(self):
-        """Single tick: check orderbooks, compute spread, decide entry/exit."""
-        mid_a = self._mid_price(self._book_a)
-        mid_b = self._mid_price(self._book_b)
-        if mid_a is None or mid_b is None:
+        """Single tick: iterate over all enabled pairs, find best opportunity."""
+        if not self._enabled_pairs:
             return
 
-        sample = self._add_spread_sample(mid_a, mid_b)
+        best_edge = None
+        best_coin = None
+        best_mid_a = None
+        best_mid_b = None
+        best_sample = None
 
-        target = self._compute_percentile(self.config.timeframe)
-        if target is None:
-            return  # Not enough data yet
-
-        fees_rt = DEFAULT_FEE_BPS * 4  # 2 legs × 2 (entry + exit)
+        fees_rt = DEFAULT_FEE_BPS * 4  # 2 legs x 2 (entry + exit)
         slip_margin = Decimal(str(self.config.max_slippage_ticks * 0.01 * 2))
-
-        edge = self._compute_edge(sample.spread, target, fees_rt, slip_margin)
         min_edge = Decimal(str(self.config.min_edge_bps))
 
-        if self._has_position and self._open_trade:
-            await self._check_exit(mid_a, mid_b, float(fees_rt), float(slip_margin), float(edge))
-        else:
-            await self._check_entry(mid_a, mid_b, float(edge), float(min_edge), sample)
+        for coin in self._enabled_pairs:
+            mid_a, mid_b = self._get_mids_for_coin(coin)
+            if mid_a is None or mid_b is None:
+                continue
 
-    async def _check_entry(self, mid_a: float, mid_b: float, edge: float, min_edge: float, sample: SpreadSample):
+            sample = self._add_spread_sample(coin, mid_a, mid_b)
+            target = self._compute_percentile(coin, self.config.timeframe)
+            if target is None:
+                continue
+
+            edge = self._compute_edge(sample.spread, target, fees_rt, slip_margin)
+
+            if best_edge is None or edge > best_edge:
+                best_edge = edge
+                best_coin = coin
+                best_mid_a = mid_a
+                best_mid_b = mid_b
+                best_sample = sample
+
+        if best_edge is None:
+            return
+
+        if self._has_position and self._open_trade:
+            # Check exit on the coin we're currently holding
+            open_coin = self._open_trade["coin"]
+            open_mid_a, open_mid_b = self._get_mids_for_coin(open_coin)
+            if open_mid_a is not None and open_mid_b is not None:
+                open_target = self._compute_percentile(open_coin, self.config.timeframe)
+                if open_target is not None:
+                    open_edge = self._compute_edge(
+                        self._add_spread_sample(open_coin, open_mid_a, open_mid_b).spread,
+                        open_target, fees_rt, slip_margin
+                    )
+                    await self._check_exit(open_coin, open_mid_a, open_mid_b, float(fees_rt), float(slip_margin), float(open_edge))
+        else:
+            await self._check_entry(best_coin, best_mid_a, best_mid_b, float(best_edge), float(min_edge), best_sample)
+
+    async def _check_entry(self, coin: str, mid_a: float, mid_b: float, edge: float, min_edge: float, sample: SpreadSample):
         if edge < min_edge:
             return
 
         if self._funding_blocked:
-            logger.debug(f"[Bot {self.bot_id}] Entry blocked by funding")
+            logger.debug(f"[Bot {self.bot_id}] Entry blocked by funding on {coin}")
             return
 
         size = self.config.max_position_size
@@ -574,16 +671,15 @@ class BotEngine:
         else:
             side_a, side_b = "sell", "buy"
 
-        logger.info(f"[Bot {self.bot_id}] ENTRY SIGNAL edge={edge:.2f}bps spread={sample.spread}")
+        logger.info(f"[Bot {self.bot_id}] ENTRY SIGNAL {coin} edge={edge:.2f}bps spread={sample.spread}")
 
-        result_a, result_b = await self._execute_pair_order(side_a, side_b, size, mid_a, mid_b)
+        result_a, result_b = await self._execute_pair_order(coin, side_a, side_b, size, mid_a, mid_b)
 
         if result_a is None or result_b is None:
             return
 
-        # One-leg protection
         if self.config.one_leg_protection:
-            both_filled = await self._one_leg_check(result_a, result_b)
+            both_filled = await self._one_leg_check(coin, result_a, result_b)
             if not both_filled:
                 return
 
@@ -596,6 +692,7 @@ class BotEngine:
         self.metrics.record_slippage(result_a.slippage_bps, result_b.slippage_bps)
 
         self._open_trade = {
+            "coin": coin,
             "entry_time": datetime.now(timezone.utc).isoformat(),
             "entry_price_a": result_a.price,
             "entry_price_b": result_b.price,
@@ -608,13 +705,12 @@ class BotEngine:
             "slippage_b": result_b.slippage_bps,
         }
 
-        logger.info(f"[Bot {self.bot_id}] TRADE OPENED a={result_a.price} b={result_b.price} size={size}")
+        logger.info(f"[Bot {self.bot_id}] TRADE OPENED {coin} a={result_a.price} b={result_b.price} size={size}")
 
-        # Persist via callback
         if self.on_trade_callback:
             self.on_trade_callback("open", self.bot_id, self._open_trade)
 
-    async def _check_exit(self, mid_a: float, mid_b: float, fees_rt: float, slip_margin: float, current_edge: float):
+    async def _check_exit(self, coin: str, mid_a: float, mid_b: float, fees_rt: float, slip_margin: float, current_edge: float):
         trade = self._open_trade
         if not trade:
             return
@@ -623,7 +719,6 @@ class BotEngine:
         entry_b = trade["entry_price_b"]
         size = trade["size"]
 
-        # Compute net PnL
         if self.direction == "long_a_short_b":
             pnl_a = (mid_a - entry_a) * size
             pnl_b = (entry_b - mid_b) * size
@@ -634,7 +729,6 @@ class BotEngine:
         gross_pnl = pnl_a + pnl_b
         net_pnl = gross_pnl - fees_rt
 
-        # Exit decision
         should_exit = False
         close_reason = ""
 
@@ -651,17 +745,15 @@ class BotEngine:
         if not should_exit:
             return
 
-        # Execute exit
         exit_side_a = "sell" if trade["side_a"] == "buy" else "buy"
         exit_side_b = "sell" if trade["side_b"] == "buy" else "buy"
 
-        result_a, result_b = await self._execute_pair_order(exit_side_a, exit_side_b, size, mid_a, mid_b)
+        result_a, result_b = await self._execute_pair_order(coin, exit_side_a, exit_side_b, size, mid_a, mid_b)
 
         if result_a is None or result_b is None:
-            logger.warning(f"[Bot {self.bot_id}] Exit order failed, position still open")
+            logger.warning(f"[Bot {self.bot_id}] Exit order failed on {coin}, position still open")
             return
 
-        # Record trade close
         actual_fees = fees_rt
         self.metrics.record_trade_close(net_pnl, actual_fees, size * (mid_a + mid_b))
         self.metrics.record_slippage(
@@ -669,9 +761,8 @@ class BotEngine:
             result_b.slippage_bps if result_b else 0,
         )
 
-        logger.info(f"[Bot {self.bot_id}] TRADE CLOSED pnl={net_pnl:.6f} reason={close_reason}")
+        logger.info(f"[Bot {self.bot_id}] TRADE CLOSED {coin} pnl={net_pnl:.6f} reason={close_reason}")
 
-        # Persist via callback
         if self.on_trade_callback:
             trade_record = {
                 **trade,
@@ -693,8 +784,14 @@ class BotEngine:
         if self.state == BotState.RUNNING:
             return
 
+        if not self.account_address or not self.api_key:
+            raise RuntimeError(f"Bot {self.bot_id}: No credentials configured")
+
+        if not self._enabled_pairs:
+            raise RuntimeError(f"Bot {self.bot_id}: No trading pairs enabled")
+
         self.state = BotState.CONNECTING
-        logger.info(f"[Bot {self.bot_id}] Starting {self.name}...")
+        logger.info(f"[Bot {self.bot_id}] Starting {self.name} with {len(self._enabled_pairs)} pairs...")
 
         if not self._connect_exchange():
             self.state = BotState.STOPPED
@@ -709,7 +806,7 @@ class BotEngine:
             asyncio.create_task(self._funding_loop()),
         ]
 
-        logger.info(f"[Bot {self.bot_id}] RUNNING — {self.name}")
+        logger.info(f"[Bot {self.bot_id}] RUNNING — {self.name} — pairs: {self._enabled_pairs}")
 
     async def stop(self):
         logger.info(f"[Bot {self.bot_id}] Stopping {self.name}...")
@@ -733,13 +830,15 @@ class BotEngine:
         if self._has_position and self._open_trade and self._exchange:
             try:
                 trade = self._open_trade
+                coin = trade["coin"]
                 exit_side_a = "sell" if trade["side_a"] == "buy" else "buy"
                 exit_side_b = "sell" if trade["side_b"] == "buy" else "buy"
 
-                mid_a = self._mid_price(self._book_a) or trade["entry_price_a"]
-                mid_b = self._mid_price(self._book_b) or trade["entry_price_b"]
+                mid_a, mid_b = self._get_mids_for_coin(coin)
+                mid_a = mid_a or trade["entry_price_a"]
+                mid_b = mid_b or trade["entry_price_b"]
 
-                await self._execute_pair_order(exit_side_a, exit_side_b, trade["size"], mid_a, mid_b)
+                await self._execute_pair_order(coin, exit_side_a, exit_side_b, trade["size"], mid_a, mid_b)
                 self._has_position = False
                 self._open_trade = None
             except Exception as e:
