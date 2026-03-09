@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import NavHeader from '../../components/NavHeader';
 
 // ─── Color helpers ──────────────────────────────────────────
@@ -29,6 +29,8 @@ export default function DeployerRouterPage() {
   const [lastUpdate, setLastUpdate] = useState(null);
   const [editingWallet, setEditingWallet] = useState(null); // { botId, field }
   const [walletInput, setWalletInput] = useState('');
+  const [logs, setLogs] = useState([]);
+  const [showLogs, setShowLogs] = useState(true);
 
   const fetchData = useCallback(() => {
     fetch('/api/bots')
@@ -37,11 +39,19 @@ export default function DeployerRouterPage() {
       .catch(() => {});
   }, []);
 
+  const fetchLogs = useCallback(() => {
+    fetch('/api/logs?limit=50')
+      .then(r => r.json())
+      .then(d => setLogs(d.logs || []))
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 3000);
+    fetchLogs();
+    const interval = setInterval(() => { fetchData(); fetchLogs(); }, 3000);
     return () => clearInterval(interval);
-  }, [fetchData]);
+  }, [fetchData, fetchLogs]);
 
   // SSE for connection status
   useEffect(() => {
@@ -193,6 +203,51 @@ export default function DeployerRouterPage() {
           ))}
         </div>
       </div>
+
+      {/* ─── Activity Logs Panel ──── */}
+      <div className="max-w-[1800px] mx-auto px-6 pb-6">
+        <div className="bg-white rounded-xl border border-[#e8e0d4] overflow-hidden">
+          <button
+            onClick={() => setShowLogs(!showLogs)}
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-[#faf7f2] transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+              <span className="text-xs font-bold text-[#2d2a26] uppercase">Bot Engine Logs</span>
+              <span className="text-[10px] text-[#b0a898]">({logs.length} entries)</span>
+            </div>
+            <span className="text-[#b0a898] text-xs">{showLogs ? 'Hide' : 'Show'}</span>
+          </button>
+          {showLogs && (
+            <div className="border-t border-[#e8e0d4] bg-[#1a1a2e] max-h-[300px] overflow-y-auto font-mono text-[11px]">
+              {logs.length === 0 ? (
+                <div className="px-4 py-8 text-center text-gray-500">
+                  No logs yet. Start a bot to see activity here.
+                  <br />
+                  <span className="text-[10px] text-gray-600 mt-1 block">
+                    Make sure the bot-engine (FastAPI backend) is running on port 8000
+                  </span>
+                </div>
+              ) : (
+                logs.slice().reverse().map((log, i) => (
+                  <div key={i} className={`px-4 py-1 border-b border-[#2a2a3e] flex gap-3 ${
+                    log.level === 'ERROR' ? 'bg-red-900/20' :
+                    log.level === 'WARNING' ? 'bg-amber-900/20' : ''
+                  }`}>
+                    <span className="text-gray-500 shrink-0">{log.ts?.split('T')[1]?.slice(0, 8) || ''}</span>
+                    <span className={`shrink-0 w-12 ${
+                      log.level === 'ERROR' ? 'text-red-400' :
+                      log.level === 'WARNING' ? 'text-amber-400' :
+                      log.level === 'INFO' ? 'text-green-400' : 'text-gray-400'
+                    }`}>{log.level}</span>
+                    <span className="text-gray-300">{log.msg}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -220,17 +275,28 @@ function CounterChip({ label, value, color }) {
 function BotColumn({ bot, onAction, onConfigUpdate, onWalletSet, onPairToggle, onTiersToggle, editingWallet, setEditingWallet, walletInput, setWalletInput }) {
   const ec = EXCHANGE_COLORS[bot.exchange] || EXCHANGE_COLORS.FLX;
   const [localConfig, setLocalConfig] = useState(bot.config);
+  const [dirty, setDirty] = useState(false);
+  const serverConfigRef = useRef(null);
 
+  // Only sync from server when config actually changes (and user hasn't edited locally)
   useEffect(() => {
-    setLocalConfig(bot.config);
-  }, [bot.config]);
+    const serverJson = JSON.stringify(bot.config);
+    if (serverJson !== serverConfigRef.current) {
+      serverConfigRef.current = serverJson;
+      if (!dirty) {
+        setLocalConfig(bot.config);
+      }
+    }
+  }, [bot.config, dirty]);
 
   const updateLocal = (key, val) => {
+    setDirty(true);
     setLocalConfig(prev => ({ ...prev, [key]: val }));
   };
 
   const applyConfig = () => {
     onConfigUpdate(bot.id, localConfig);
+    setDirty(false);
   };
 
   return (
@@ -443,12 +509,14 @@ function BotColumn({ bot, onAction, onConfigUpdate, onWalletSet, onPairToggle, o
         <button
           onClick={applyConfig}
           className={`w-full py-2.5 text-xs font-bold text-white rounded-lg transition-colors ${
-            bot.exchange === 'FLX' ? 'bg-orange-400 hover:bg-orange-500' :
-            bot.exchange === 'KM' ? 'bg-emerald-500 hover:bg-emerald-600' :
-            'bg-blue-500 hover:bg-blue-600'
+            dirty
+              ? 'bg-[#f5a623] hover:bg-[#e09520] animate-pulse'
+              : bot.exchange === 'FLX' ? 'bg-orange-400 hover:bg-orange-500' :
+                bot.exchange === 'KM' ? 'bg-emerald-500 hover:bg-emerald-600' :
+                'bg-blue-500 hover:bg-blue-600'
           }`}
         >
-          Apply {bot.name}
+          {dirty ? '⚡ Apply Changes' : `Apply ${bot.name}`}
         </button>
       </div>
 

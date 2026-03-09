@@ -4,10 +4,13 @@ No PostgreSQL, no Redis, no JWT — just SQLite + in-memory bot management.
 """
 import asyncio
 import json
+import logging
 import os
 import signal
 import sqlite3
+from collections import deque
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -25,6 +28,31 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from bot_manager import BotManager
 from bot_defs import BOT_DEFINITIONS
+
+# ── Log ring buffer for dashboard ──
+LOG_BUFFER: deque[dict] = deque(maxlen=500)
+
+
+class DashboardLogHandler(logging.Handler):
+    """Captures log messages into the ring buffer for the dashboard."""
+    def emit(self, record):
+        try:
+            LOG_BUFFER.append({
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "level": record.levelname,
+                "logger": record.name,
+                "msg": self.format(record),
+            })
+        except Exception:
+            pass
+
+
+# Install handler on bot loggers
+_dash_handler = DashboardLogHandler()
+_dash_handler.setLevel(logging.DEBUG)
+_dash_handler.setFormatter(logging.Formatter("%(message)s"))
+for _logger_name in ("bot_engine", "bot_manager", "uvicorn"):
+    logging.getLogger(_logger_name).addHandler(_dash_handler)
 
 DATA_DIR = _root / "data"
 DB_PATH = DATA_DIR / "bots.db"
@@ -134,6 +162,15 @@ async def update_config(bot_id: int, body: dict):
 async def get_trades(bot_id: int, limit: int = 50, offset: int = 0):
     trades = manager.get_trades(bot_id, limit, offset)
     return {"trades": trades, "bot_id": bot_id}
+
+
+# ── GET /api/v1/logs — recent log entries ──
+@app.get("/api/v1/logs")
+async def get_logs(limit: int = 100, level: str = ""):
+    logs = list(LOG_BUFFER)
+    if level:
+        logs = [l for l in logs if l["level"] == level.upper()]
+    return {"logs": logs[-limit:]}
 
 
 # ── GET /health ──
