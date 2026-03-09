@@ -10,13 +10,23 @@ import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Load .env or .env.bots from project root
+_root = Path(__file__).resolve().parent.parent
+for _env_name in (".env", ".env.bots"):
+    _env_path = _root / _env_name
+    if _env_path.exists():
+        load_dotenv(_env_path)
+        break
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from bot_manager import BotManager
 from bot_defs import BOT_DEFINITIONS
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR = _root / "data"
 DB_PATH = DATA_DIR / "bots.db"
 
 
