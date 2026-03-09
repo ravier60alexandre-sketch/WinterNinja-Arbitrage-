@@ -109,3 +109,7 @@ async def redis_get(key: str) -> str | None:
 
 async def redis_set(key: str, value: Any, ttl: int | None = 60) -> bool:
     return await redis_manager.set(key, value, ttl=ttl)
+
+
+async def close_redis() -> None:
+    await redis_manager.disconnect()
