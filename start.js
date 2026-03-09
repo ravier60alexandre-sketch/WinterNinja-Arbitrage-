@@ -55,9 +55,13 @@ async function main() {
 
   if (fs.existsSync(backendDir) && fs.existsSync(path.resolve(backendDir, 'main.py'))) {
     // Load .env file into environment for the Python process
+    // Try .env first, fall back to .env.bots
     const backendEnv = { ...process.env };
-    if (fs.existsSync(envFile)) {
-      const envContent = fs.readFileSync(envFile, 'utf8');
+    const envBots = path.resolve(__dirname, '.env.bots');
+    const envToLoad = fs.existsSync(envFile) ? envFile : (fs.existsSync(envBots) ? envBots : null);
+    if (envToLoad) {
+      console.log(`[INFO] Loading credentials from ${path.basename(envToLoad)}`);
+      const envContent = fs.readFileSync(envToLoad, 'utf8');
       for (const line of envContent.split('\n')) {
         const trimmed = line.trim();
         if (trimmed && !trimmed.startsWith('#')) {
@@ -65,10 +69,12 @@ async function main() {
           if (eqIdx > 0) {
             const key = trimmed.slice(0, eqIdx).trim();
             const val = trimmed.slice(eqIdx + 1).trim();
-            backendEnv[key] = val;
+            if (val) backendEnv[key] = val;
           }
         }
       }
+    } else {
+      console.log('[WARN] No .env or .env.bots found — bots will start without credentials');
     }
 
     botEngine = spawn('python3', ['-u', 'main.py'], {

@@ -229,8 +229,11 @@ class BotEngine:
 
             base_url = constants.MAINNET_API_URL
 
-            # Create agent wallet from API key
-            agent_wallet = eth_account.Account.from_key(self.api_key)
+            # Create agent wallet from API key (strip 0x prefix if present)
+            key = self.api_key
+            if key.startswith("0x"):
+                key = key[2:]
+            agent_wallet = eth_account.Account.from_key(key)
 
             # Trading address = sub_account if set, otherwise account_address
             trading_address = self.sub_account or self.account_address
