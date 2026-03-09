@@ -246,7 +246,7 @@ class BotManager:
         # Also accept dashboard-format keys
         key_map = {
             "timer": "timeframe",
-            "slip": "max_slippage_ticks",
+            "slip": "max_slippage_bps",
             "max_pos": "max_position_size",
             "max_lev": "max_leverage",
         }
@@ -308,7 +308,7 @@ class BotManager:
             "max_loss_bps": 500,
             "percentile": config.percentile,
             "buf": 0,
-            "slip": config.max_slippage_ticks,
+            "slip": config.max_slippage_bps,
             "timer": config.timeframe,
             "close_buffer_bps": config.close_buffer_bps,
             "zmr": False,
