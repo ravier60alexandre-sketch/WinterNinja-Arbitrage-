@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
 from app.models.deployer import DeployerStat
-from app.schemas.metrics import DeployerStatResponse
+from app.schemas.metrics import DeployerStatsResponse as DeployerStatResponse
 
 router = APIRouter(prefix="/deployers", tags=["deployers"])
 
