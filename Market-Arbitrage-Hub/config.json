@@ -1,0 +1,177 @@
+{
+  "pairs": [
+    {
+      "id": "flx-xyz-SILVER",
+      "marketA": "flx:SILVER",
+      "marketB": "xyz:SILVER"
+    },
+    {
+      "id": "flx-xyz-TSLA",
+      "marketA": "flx:TSLA",
+      "marketB": "xyz:TSLA"
+    },
+    {
+      "id": "flx-xyz-NVDA",
+      "marketA": "flx:NVDA",
+      "marketB": "xyz:NVDA"
+    },
+    {
+      "id": "flx-xyz-PLATINUM",
+      "marketA": "flx:PLATINUM",
+      "marketB": "xyz:PLATINUM"
+    },
+    {
+      "id": "km-xyz-SILVER",
+      "marketA": "km:SILVER",
+      "marketB": "xyz:SILVER"
+    },
+    {
+      "id": "km-xyz-NVDA",
+      "marketA": "km:NVDA",
+      "marketB": "xyz:NVDA"
+    },
+    {
+      "id": "cash-xyz-SILVER",
+      "marketA": "cash:SILVER",
+      "marketB": "xyz:SILVER"
+    },
+    {
+      "id": "cash-xyz-NVDA",
+      "marketA": "cash:NVDA",
+      "marketB": "xyz:NVDA"
+    },
+    {
+      "id": "cash-xyz-HOOD",
+      "marketA": "cash:HOOD",
+      "marketB": "xyz:HOOD"
+    },
+    {
+      "id": "cash-xyz-INTC",
+      "marketA": "cash:INTC",
+      "marketB": "xyz:INTC"
+    },
+    {
+      "id": "cash-xyz-AMZN",
+      "marketA": "cash:AMZN",
+      "marketB": "xyz:AMZN"
+    },
+    {
+      "id": "km-xyz-TSLA",
+      "marketA": "km:TSLA",
+      "marketB": "xyz:TSLA"
+    },
+    {
+      "id": "cash-xyz-TSLA",
+      "marketA": "cash:TSLA",
+      "marketB": "xyz:TSLA"
+    },
+    {
+      "id": "flx-xyz-GOLD",
+      "marketA": "flx:GOLD",
+      "marketB": "xyz:GOLD"
+    },
+    {
+      "id": "km-xyz-GOLD",
+      "marketA": "km:GOLD",
+      "marketB": "xyz:GOLD"
+    },
+    {
+      "id": "cash-xyz-GOLD",
+      "marketA": "cash:GOLD",
+      "marketB": "xyz:GOLD"
+    },
+    {
+      "id": "km-xyz-GOOGL",
+      "marketA": "km:GOOGL",
+      "marketB": "xyz:GOOGL"
+    },
+    {
+      "id": "cash-xyz-GOOGL",
+      "marketA": "cash:GOOGL",
+      "marketB": "xyz:GOOGL"
+    },
+    {
+      "id": "km-xyz-PLTR",
+      "marketA": "km:PLTR",
+      "marketB": "xyz:PLTR"
+    },
+    {
+      "id": "flx-xyz-COIN",
+      "marketA": "flx:COIN",
+      "marketB": "xyz:COIN"
+    },
+    {
+      "id": "cash-xyz-META",
+      "marketA": "cash:META",
+      "marketB": "xyz:META"
+    },
+    {
+      "id": "km-xyz-AAPL",
+      "marketA": "km:AAPL",
+      "marketB": "xyz:AAPL"
+    },
+    {
+      "id": "cash-xyz-MSFT",
+      "marketA": "cash:MSFT",
+      "marketB": "xyz:MSFT"
+    },
+    {
+      "id": "km-xyz-MU",
+      "marketA": "km:MU",
+      "marketB": "xyz:MU"
+    },
+    {
+      "id": "flx-xyz-CRCL",
+      "marketA": "flx:CRCL",
+      "marketB": "xyz:CRCL"
+    },
+    {
+      "id": "km-xyz-EUR",
+      "marketA": "km:EUR",
+      "marketB": "xyz:EUR"
+    },
+    {
+      "id": "km-xyz-BABA",
+      "marketA": "km:BABA",
+      "marketB": "xyz:BABA"
+    },
+    {
+      "id": "flx-xyz-COPPER",
+      "marketA": "flx:COPPER",
+      "marketB": "xyz:COPPER"
+    },
+    {
+      "id": "flx-xyz-PALLADIUM",
+      "marketA": "flx:PALLADIUM",
+      "marketB": "xyz:PALLADIUM"
+    },
+    {
+      "id": "cash-xyz-EWY",
+      "marketA": "cash:EWY",
+      "marketB": "xyz:EWY"
+    }
+  ],
+  "notionals": [
+    25,
+    50,
+    100
+  ],
+  "slippageBufferOpenBps": 2,
+  "slippageBufferRoundTripBps": 4,
+  "minEdgeOpenBpsOverride": 7,
+  "minProfitCloseBps": 0,
+  "maxSlippageBps": 2,
+  "maxLevelsToConsume": 2,
+  "safetySpreadBps": 0.25,
+  "minRepegHoldMs": 10000,
+  "minSpikeMs": 0,
+  "signalRingSize": 500,
+  "csvLogging": true,
+  "debugRawWs": false,
+  "debugRawWsLimit": 200,
+  "wsUrl": "wss://api.hyperliquid.xyz/ws",
+  "apiUrl": "https://api.hyperliquid.xyz/info",
+  "port": 5000,
+  "takerFee": 0.000045,
+  "noGrowthTakerFee": 0.00015
+}

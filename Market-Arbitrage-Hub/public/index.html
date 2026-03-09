@@ -1,0 +1,1178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Arbitrage</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9889;</text></svg>">
+  <link rel="stylesheet" href="/styles.css?v=50">
+  <script>
+    (function(){var t=localStorage.getItem('theme');if(t==='dark')document.documentElement.className='dark-mode-pending';})();
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="/botPanelTemplate.js?v=1"></script>
+</head>
+<body>
+  <div id="bg-orbs">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+    <div class="orb orb-4"></div>
+    <div class="orb orb-5"></div>
+    <div class="orb orb-6"></div>
+  </div>
+  <div class="container">
+    <header>
+      <a class="logo-link" onclick="switchView('main')">
+        <h1>Arbitrage</h1>
+      </a>
+      <nav class="main-nav">
+        <button class="nav-btn" data-view="spreads">Pair</button>
+        <button class="nav-btn" data-view="charts">Charts</button>
+        <button class="nav-btn" data-view="superbot" id="navSuperBotBtn">Bots</button>
+        <button class="nav-btn" data-view="sbstats1">Stats</button>
+        <button class="nav-btn" data-view="farming">Farm</button>
+        <button class="nav-btn" data-view="architecture">Archi</button>
+      </nav>
+      <button id="themeToggleBtn" class="theme-toggle-btn" onclick="toggleTheme()" title="Toggle dark mode">&#9790;</button>
+    </header>
+
+    <div id="viewMain" class="view-panel">
+      <div class="overview-top">
+        <div class="section" style="width:100%;">
+          <div class="overview-bot-header">
+            <div class="bot-status-indicator">
+              <span id="overviewBotDot" class="status-dot disconnected"></span>
+              <span id="overviewBotStatus">DISABLED</span>
+            </div>
+            <div id="overviewWallet" class="overview-wallet">
+              <span class="wallet-token"><span class="token-name">USDC</span> <span id="ovBalUSDC" class="token-val">--</span></span>
+              <span class="wallet-token"><span class="token-name">USDT</span> <span id="ovBalUSDT" class="token-val">--</span></span>
+              <span class="wallet-token"><span class="token-name">USDH</span> <span id="ovBalUSDH" class="token-val">--</span></span>
+            </div>
+          </div>
+          <div class="overview-bot-grid">
+            <div class="overview-stat highlight">
+              <div class="overview-stat-label">True P&amp;L</div>
+              <div class="overview-stat-value" id="ovPnl">$0.00</div>
+              <canvas id="ovPnlSparkline" class="pnl-sparkline" width="100" height="30"></canvas>
+            </div>
+            <div class="overview-stat">
+              <div class="overview-stat-label">Gross P&amp;L</div>
+              <div class="overview-stat-value" id="ovGrossPnl">$0.00</div>
+            </div>
+            <div class="overview-stat">
+              <div class="overview-stat-label">Fees</div>
+              <div class="overview-stat-value" id="ovFees">$0.00</div>
+            </div>
+            <div class="overview-stat">
+              <div class="overview-stat-label">Orphan Costs</div>
+              <div class="overview-stat-value negative" id="ovOrphanCost">$0.00</div>
+            </div>
+            <div class="overview-stat">
+              <div class="overview-stat-label">Positions</div>
+              <div class="overview-stat-value" id="ovOpen">0</div>
+            </div>
+            <div class="overview-stat">
+              <div class="overview-stat-label">Ferm&eacute;s</div>
+              <div class="overview-stat-value" id="ovClosed">0</div>
+            </div>
+            <div class="overview-stat win">
+              <div class="overview-stat-label">Win Rate</div>
+              <div class="overview-stat-value" id="ovWinRate">--%</div>
+            </div>
+            <div class="overview-stat">
+              <div class="overview-stat-label">Orphans</div>
+              <div class="overview-stat-value" id="ovOrphanCount">0</div>
+            </div>
+            <div class="overview-stat">
+              <div class="overview-stat-label">Erreurs</div>
+              <div class="overview-stat-value" id="ovErrors">0</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="deployer-stats-section" style="margin-bottom:20px;">
+        <h3 style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;font-weight:700;margin-bottom:10px;">Volume par Deployer</h3>
+        <div class="deployer-cards-grid" id="deployerCardsGrid">
+          <div class="deployer-card deployer-xyz">
+            <div class="deployer-card-header"><span class="deployer-badge">XYZ</span></div>
+            <div class="deployer-card-stats">
+              <div class="deployer-stat"><span class="deployer-stat-label">Volume</span><span class="deployer-stat-value" id="depVolXyz">$0.00</span></div>
+              <div class="deployer-stat"><span class="deployer-stat-label">Fees</span><span class="deployer-stat-value" id="depFeesXyz">$0.00</span></div>
+              <div class="deployer-stat"><span class="deployer-stat-label">Trades</span><span class="deployer-stat-value" id="depTradesXyz">0</span></div>
+            </div>
+          </div>
+          <div class="deployer-card deployer-flx">
+            <div class="deployer-card-header"><span class="deployer-badge">FLX</span></div>
+            <div class="deployer-card-stats">
+              <div class="deployer-stat"><span class="deployer-stat-label">Volume</span><span class="deployer-stat-value" id="depVolFlx">$0.00</span></div>
+              <div class="deployer-stat"><span class="deployer-stat-label">Fees</span><span class="deployer-stat-value" id="depFeesFlx">$0.00</span></div>
+              <div class="deployer-stat"><span class="deployer-stat-label">Trades</span><span class="deployer-stat-value" id="depTradesFlx">0</span></div>
+            </div>
+          </div>
+          <div class="deployer-card deployer-km">
+            <div class="deployer-card-header"><span class="deployer-badge">KM</span></div>
+            <div class="deployer-card-stats">
+              <div class="deployer-stat"><span class="deployer-stat-label">Volume</span><span class="deployer-stat-value" id="depVolKm">$0.00</span></div>
+              <div class="deployer-stat"><span class="deployer-stat-label">Fees</span><span class="deployer-stat-value" id="depFeesKm">$0.00</span></div>
+              <div class="deployer-stat"><span class="deployer-stat-label">Trades</span><span class="deployer-stat-value" id="depTradesKm">0</span></div>
+            </div>
+          </div>
+          <div class="deployer-card deployer-cash">
+            <div class="deployer-card-header"><span class="deployer-badge">CASH</span></div>
+            <div class="deployer-card-stats">
+              <div class="deployer-stat"><span class="deployer-stat-label">Volume</span><span class="deployer-stat-value" id="depVolCash">$0.00</span></div>
+              <div class="deployer-stat"><span class="deployer-stat-label">Fees</span><span class="deployer-stat-value" id="depFeesCash">$0.00</span></div>
+              <div class="deployer-stat"><span class="deployer-stat-label">Trades</span><span class="deployer-stat-value" id="depTradesCash">0</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="deployer-emergency-actions" style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;">
+          <button class="btn btn-danger-deployer" onclick="closeDeployer('flx')">Close All FLX</button>
+          <button class="btn btn-danger-deployer" onclick="closeDeployer('km')">Close All KM</button>
+          <button class="btn btn-danger-deployer" onclick="closeDeployer('cash')">Close All CASH</button>
+        </div>
+      </div>
+
+      <div class="bot-activity-section">
+        <h3 style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;font-weight:700;margin-bottom:10px;">Activit&eacute; en direct <span style="font-size:0.6rem;color:var(--text-muted);font-weight:400;">(30 derniers)</span></h3>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <div class="activity-filter-bar" id="overviewActivityFilters" style="flex:1;"></div>
+          <div class="sound-ctrl-wrap">
+            <button id="soundMasterBtn" class="sound-master-btn active" onclick="toggleSoundMaster()" title="Sons notifications">&#x1F50A;</button>
+            <button class="sound-gear-btn" onclick="toggleSoundPanel()" title="R&eacute;glages sons">&#x2699;</button>
+            <div id="soundPanel" class="sound-panel" style="display:none;">
+              <div class="sound-panel-header">R&eacute;glages Sons</div>
+              <div class="sound-vol-row">
+                <label>Volume</label>
+                <input type="range" id="soundVolumeSlider" min="0" max="100" value="50" oninput="updateSoundVolume(this.value)">
+                <span id="soundVolLabel">50%</span>
+              </div>
+              <div id="soundTypesGrid" class="sound-types-grid"></div>
+            </div>
+          </div>
+          <button class="btn-sm btn-config" onclick="openActivityHistoryModal()">&#x1F4CB; Historique complet</button>
+        </div>
+        <div id="overviewActivityFeed" class="activity-feed"></div>
+      </div>
+    </div>
+
+    <div id="viewSpreads" class="view-panel" style="display:none;">
+      <div class="data-summary-bar" style="display:flex;gap:16px;margin-bottom:14px;flex-wrap:wrap;">
+        <div class="glass-card-mini"><span class="stat-label-sm">Paires actives</span><span id="dataActivePairs" class="stat-val-sm">-</span></div>
+        <div class="glass-card-mini"><span class="stat-label-sm">Liq. moyenne</span><span id="dataAvgLiquidity" class="stat-val-sm">-</span></div>
+      </div>
+      <div class="stats-section pair-scanner-section">
+        <h3>Pair+ Scanner</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 8px;">Toutes les paires HIP3 cross-deployer disponibles sur Hyperliquid.</p>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+          <button class="btn btn-start btn-sm" id="scanPairsBtn" onclick="scanPairs()">Scanner</button>
+          <input type="text" id="scanFilterInput" placeholder="Filtrer par coin..." oninput="filterScanResults()" style="padding:4px 8px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--glass-bg);color:var(--text-primary);font-size:11px;width:140px;">
+          <select id="scanFilterDeployer" onchange="filterScanResults()" style="padding:4px 6px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--glass-bg);color:var(--text-primary);font-size:11px;">
+            <option value="">Tous deployers</option>
+            <option value="xyz">xyz</option>
+            <option value="flx">flx</option>
+            <option value="km">km</option>
+            <option value="cash">cash</option>
+            <option value="vntl">vntl</option>
+            <option value="hyna">hyna</option>
+            <option value="abcd">abcd</option>
+          </select>
+          <label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:3px;"><input type="checkbox" id="scanShowAdded" onchange="filterScanResults()" checked> Afficher ajout&eacute;es</label>
+          <span id="scanStatus" class="muted" style="font-size:11px;"></span>
+        </div>
+        <div id="scanResults" style="display:none;">
+          <div class="table-scroll" style="max-height:400px;overflow-y:auto;">
+            <table class="signals-table compact">
+              <thead>
+                <tr>
+                  <th style="width:30px;"><input type="checkbox" id="scanSelectAll" onchange="toggleAllScanResults(this.checked)"></th>
+                  <th>Coin</th>
+                  <th>Deployer A</th>
+                  <th>Deployer B</th>
+                  <th>Max Lev.</th>
+                  <th>Statut</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="scanResultsBody"></tbody>
+            </table>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <button class="btn btn-start" id="addSelectedPairsBtn" onclick="addSelectedPairs()">Ajouter s&eacute;lectionn&eacute;es</button>
+            <span id="scanBulkStatus" class="muted" style="font-size:11px;align-self:center;"></span>
+          </div>
+        </div>
+      </div>
+
+
+    </div>
+
+    <div id="viewSuperbot" class="view-panel" style="display:none;">
+      <div class="stats-section" style="margin-bottom:16px;">
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:12px;">
+          <h3 style="margin:0;">6-Bot Deployer Router</h3>
+          <div class="sb-tab-nav" style="display:flex;gap:4px;margin-left:auto;">
+            <button class="sb-tab-btn active" id="sbTabShort" onclick="switchSbTab('short')">XYZ Short</button>
+            <button class="sb-tab-btn" id="sbTabLong" onclick="switchSbTab('long')">XYZ Long</button>
+          </div>
+        </div>
+        <div class="summary-cards" style="gap:10px;">
+          <div class="glass-card-mini"><span class="stat-label-sm">Combined Open</span><span class="stat-val-sm" id="sbCombOpen">0</span></div>
+          <div class="glass-card-mini"><span class="stat-label-sm">Net PnL</span><span class="stat-val-sm" id="sbCombPnl">$0.00</span></div>
+          <div class="glass-card-mini"><span class="stat-label-sm">Total Fees</span><span class="stat-val-sm" id="sbCombFees">$0.00</span></div>
+          <div class="glass-card-mini"><span class="stat-label-sm">Total Funding</span><span class="stat-val-sm" id="sbCombFund">$0.00</span></div>
+          <div class="glass-card-mini"><span class="stat-label-sm">Total Volume</span><span class="stat-val-sm" id="sbCombVolume">$0.00</span></div>
+          <div class="glass-card-mini"><span class="stat-label-sm">Total Trades</span><span class="stat-val-sm" id="sbCombTrades">0</span></div>
+        </div>
+        <div class="summary-cards" style="gap:10px;margin-top:8px;">
+          <div class="glass-card-mini"><span class="stat-label-sm">Routed</span><span class="stat-val-sm" id="sbRouteTotal">0</span></div>
+          <div class="glass-card-mini"><span class="stat-label-sm">Rejected</span><span class="stat-val-sm" id="sbRouteRej">0</span></div>
+          <div class="glass-card-mini"><span class="stat-label-sm">Bot1 FLX</span><span class="stat-val-sm" id="sbRouteBot1">0</span></div>
+          <div class="glass-card-mini"><span class="stat-label-sm">Bot2 KM</span><span class="stat-val-sm" id="sbRouteBot2">0</span></div>
+          <div class="glass-card-mini"><span class="stat-label-sm">Bot3 CASH</span><span class="stat-val-sm" id="sbRouteBot3">0</span></div>
+          <div class="glass-card-mini"><span class="stat-label-sm">Bot4 FLX</span><span class="stat-val-sm" id="sbRouteBot4">0</span></div>
+          <div class="glass-card-mini"><span class="stat-label-sm">Bot5 KM</span><span class="stat-val-sm" id="sbRouteBot5">0</span></div>
+          <div class="glass-card-mini"><span class="stat-label-sm">Bot6 CASH</span><span class="stat-val-sm" id="sbRouteBot6">0</span></div>
+        </div>
+      </div>
+
+      <div id="sbTabShortContent" class="sb-tab-content">
+        <div class="superbot-triple-grid" id="sbShortGrid"></div>
+      </div>
+      <div id="sbTabLongContent" class="sb-tab-content" style="display:none;">
+        <div class="superbot-triple-grid" id="sbLongGrid"></div>
+      </div>
+
+      <div style="margin-top:24px;padding:20px;border-top:1px solid var(--border);text-align:center;">
+        <button id="sbResetAllBtn" class="btn btn-reset" onclick="sbResetAll()" style="background:linear-gradient(135deg,#ef4444,#dc2626);color:#fff;padding:12px 32px;font-size:14px;font-weight:700;border:none;border-radius:12px;cursor:pointer;letter-spacing:0.5px;box-shadow:0 4px 15px rgba(239,68,68,0.3);transition:all 0.3s ease;">
+          Reset All (6 Bots)
+        </button>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Close all on-chain positions and delete trade history for all 6 bots</div>
+      </div>
+
+      <div id="crossWalletSection" class="cross-wallet-section glass-card" style="display:none;margin-top:24px;padding:20px;">
+        <h3 style="margin:0 0 16px;font-size:14px;font-weight:700;color:var(--text-primary);letter-spacing:0.03em;">R&eacute;&eacute;quilibrage Cross-Wallet</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+          <div id="crossBot1Card" class="cross-wallet-card">
+            <div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Bot 1 (D1)</div>
+            <div style="font-size:18px;font-weight:700;color:var(--text-primary);" id="crossBot1Balance">$0.00</div>
+            <div style="font-size:11px;color:var(--text-secondary);margin-top:4px;" id="crossBot1Margin">Marge libre: --%</div>
+            <span id="crossBot1Status" class="cross-wallet-status cw-ok">OK</span>
+          </div>
+          <div id="crossBot2Card" class="cross-wallet-card">
+            <div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Bot 2 (D2)</div>
+            <div style="font-size:18px;font-weight:700;color:var(--text-primary);" id="crossBot2Balance">$0.00</div>
+            <div style="font-size:11px;color:var(--text-secondary);margin-top:4px;" id="crossBot2Margin">Marge libre: --%</div>
+            <span id="crossBot2Status" class="cross-wallet-status cw-ok">OK</span>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:16px;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--text-secondary);cursor:pointer;">
+            <input type="checkbox" id="crossAutoToggle" onchange="crossToggleAuto(this.checked)" style="accent-color:var(--accent-gold);">
+            Auto-Rebalance
+          </label>
+          <div style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-secondary);">
+            <span>Intervalle:</span>
+            <input type="range" id="crossCheckSlider" min="60" max="1800" step="60" value="300" onchange="crossUpdateConfig()" style="width:80px;accent-color:var(--accent-gold);">
+            <span id="crossCheckVal">5min</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-secondary);">
+            <span>Cooldown:</span>
+            <input type="range" id="crossCooldownSlider" min="60" max="3600" step="60" value="300" onchange="crossUpdateConfig()" style="width:80px;accent-color:var(--accent-gold);">
+            <span id="crossCooldownVal">5min</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-secondary);">
+            <span>Dry &lt;</span>
+            <input type="number" id="crossDryThreshold" value="5" min="1" max="30" step="1" onchange="crossUpdateConfig()" style="width:42px;padding:2px 4px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--glass-bg);color:var(--text-primary);">
+            <span>%</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-secondary);">
+            <span>Donate &gt;</span>
+            <input type="number" id="crossDonateThreshold" value="10" min="5" max="50" step="1" onchange="crossUpdateConfig()" style="width:42px;padding:2px 4px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--glass-bg);color:var(--text-primary);">
+            <span>%</span>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+          <button id="crossTransferBtn" class="btn-gold" onclick="crossForceTransfer()" style="padding:8px 20px;font-size:12px;font-weight:700;border-radius:8px;" disabled>
+            Transf&eacute;rer Maintenant
+          </button>
+          <span id="crossCooldownInfo" style="font-size:11px;"></span>
+        </div>
+
+        <div id="crossWalletHistory" style="font-size:11px;color:var(--text-secondary);"></div>
+      </div>
+    </div>
+
+
+    <div id="viewSbstats1" class="view-panel" style="display:none;">
+      <div class="stats-section">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <h3 style="margin:0;">Pair Analytics</h3>
+          <button class="btn btn-reset" onclick="supervisorRestart()" style="font-size:11px;padding:5px 12px;">&#x1F504; Restart</button>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>Top PnL Pairs</h3>
+        <div class="table-scroll" style="max-height:400px;overflow-y:auto;">
+          <table class="signals-table compact">
+            <thead><tr><th>Pair</th><th>Dir</th><th>PnL ($)</th><th>Trades</th><th>Win Rate</th></tr></thead>
+            <tbody id="pairTopPnlBody"><tr><td colspan="5" style="text-align:center;color:var(--text-muted);">Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>Top Volume Pairs</h3>
+        <div class="table-scroll" style="max-height:400px;overflow-y:auto;">
+          <table class="signals-table compact">
+            <thead><tr><th>Pair</th><th>Dir</th><th>Volume ($)</th><th>Trades</th></tr></thead>
+            <tbody id="pairTopVolumeBody"><tr><td colspan="4" style="text-align:center;color:var(--text-muted);">Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>Most Failures</h3>
+        <div class="table-scroll" style="max-height:400px;overflow-y:auto;">
+          <table class="signals-table compact">
+            <thead><tr><th>Pair</th><th>Dir</th><th>Errors</th><th>Error Rate %</th><th>Total Trades</th></tr></thead>
+            <tbody id="pairMostFailedBody"><tr><td colspan="5" style="text-align:center;color:var(--text-muted);">Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>Worst Slippage</h3>
+        <div class="table-scroll" style="max-height:400px;overflow-y:auto;">
+          <table class="signals-table compact">
+            <thead><tr><th>Pair</th><th>Dir</th><th>Avg Slippage (bps)</th><th>Max Slippage (bps)</th><th>Trades</th></tr></thead>
+            <tbody id="pairWorstSlippageBody"><tr><td colspan="5" style="text-align:center;color:var(--text-muted);">Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+
+
+
+    <div id="viewCharts" class="view-panel" style="display:none;">
+      <div class="charts-top-bar" style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+        <span style="font-size:0.78rem;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.06em;">All Pairs</span>
+        <div class="chart-time-selector" id="chartTimeSelector">
+          <button class="chart-time-btn chart-time-tick" data-tick="60" onclick="setChartTimeWindow(this)">1m</button>
+          <button class="chart-time-btn chart-time-tick" data-tick="120" onclick="setChartTimeWindow(this)">2m</button>
+          <span style="width:1px;height:20px;background:var(--border-secondary);margin:0 4px;"></span>
+          <button class="chart-time-btn" data-seconds="300" onclick="setChartTimeWindow(this)">5m</button>
+          <button class="chart-time-btn active" data-seconds="900" onclick="setChartTimeWindow(this)">15m</button>
+          <button class="chart-time-btn" data-seconds="1800" onclick="setChartTimeWindow(this)">30m</button>
+          <button class="chart-time-btn" data-seconds="3600" onclick="setChartTimeWindow(this)">1h</button>
+          <span style="width:1px;height:20px;background:var(--border-secondary);margin:0 4px;"></span>
+          <button class="chart-time-btn chart-time-db" data-hours="4" onclick="setChartTimeWindow(this)">4h</button>
+          <button class="chart-time-btn chart-time-db" data-hours="12" onclick="setChartTimeWindow(this)">12h</button>
+          <button class="chart-time-btn chart-time-db" data-hours="24" onclick="setChartTimeWindow(this)">24h</button>
+          <button class="chart-time-btn chart-time-db" data-hours="168" onclick="setChartTimeWindow(this)">1W</button>
+        </div>
+        <div style="display:flex;gap:6px;margin-left:auto;align-items:center;">
+          <span style="font-size:0.68rem;color:var(--text-muted);">Spread mode:</span>
+          <button class="btn-config vol-spread-mode-btn active" data-mode="staticZ" onclick="setVolSpreadMode('staticZ')">Static Z</button>
+          <button class="btn-config vol-spread-mode-btn" data-mode="ou" onclick="setVolSpreadMode('ou')">OU</button>
+          <button class="btn-config vol-spread-mode-btn" data-mode="kalman" onclick="setVolSpreadMode('kalman')">Kalman</button>
+          <button class="btn-config vol-spread-mode-btn" data-mode="ewma" onclick="setVolSpreadMode('ewma')">EWMA</button>
+        </div>
+      </div>
+      <div id="chartsAllPairsGrid" class="charts-all-pairs-grid"></div>
+
+      <div class="stats-section" style="margin-top:24px;">
+        <h3>Edge Over Time <span class="muted">(single-pair deep dive)</span></h3>
+        <div style="display:flex;gap:12px;margin-bottom:10px;align-items:center;flex-wrap:wrap;">
+          <label style="font-size:0.75rem;color:var(--text-secondary);">Pair:</label>
+          <select id="chartPairSelect" class="config-input" style="width:160px;font-size:0.75rem;" onchange="refreshEdgeChart()"></select>
+          <label style="font-size:0.75rem;color:var(--text-secondary);">Window:</label>
+          <select id="chartWindowSelect" class="config-input" style="width:100px;font-size:0.75rem;" onchange="refreshEdgeChart()">
+            <option value="1">1h</option>
+            <option value="4" selected>4h</option>
+            <option value="12">12h</option>
+            <option value="24">24h</option>
+          </select>
+        </div>
+        <p style="font-size:0.72rem;color:var(--text-muted);margin-bottom:10px;">Live spread vs entry threshold (bps)</p>
+        <div style="position:relative;height:280px;"><canvas id="chartEdge"></canvas></div>
+      </div>
+    </div>
+
+    <div id="viewFarming" class="view-panel" style="display:none;">
+      <div class="farming-header" style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+        <h2 style="margin:0;font-size:1.1rem;">Farming Intelligence</h2>
+        <div class="farming-regime-pills" id="farmRegimePills" style="display:flex;gap:6px;margin-left:auto;"></div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <label style="font-size:0.7rem;color:var(--text-muted);">ATO</label>
+          <label class="switch" style="transform:scale(0.75);">
+            <input type="checkbox" id="farmAtoToggle" onchange="toggleFarmingATO(this.checked)">
+            <span class="slider round"></span>
+          </label>
+          <button class="btn-sm btn-start" onclick="applyFarmingATO()" style="font-size:0.65rem;padding:3px 8px;">Apply All ATO</button>
+        </div>
+      </div>
+
+      <div class="stats-section" style="margin-bottom:16px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <h3 style="margin:0;">Per-Pair Metrics</h3>
+          <span id="farmLastCalibrated" style="font-size:0.6rem;color:var(--text-muted);margin-left:auto;"></span>
+        </div>
+        <div class="table-scroll">
+          <table class="signals-table compact" id="farmMetricsTable">
+            <thead>
+              <tr>
+                <th>Pair</th>
+                <th>Regime</th>
+                <th>TEF</th>
+                <th>VWED</th>
+                <th>NetCapture</th>
+                <th>Slippage</th>
+                <th>ASS</th>
+                <th>Survival</th>
+                <th>CTR</th>
+                <th>ATO Rec.</th>
+              </tr>
+            </thead>
+            <tbody id="farmMetricsBody">
+              <tr><td colspan="10" style="text-align:center;color:var(--text-muted);">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section" style="margin-bottom:16px;">
+        <h3>ATO Optimizer</h3>
+        <div class="table-scroll">
+          <table class="signals-table compact" id="farmAtoTable">
+            <thead>
+              <tr>
+                <th>Pair</th>
+                <th>Current Threshold</th>
+                <th>ATO Optimal</th>
+                <th>Expected Net</th>
+                <th>Guard Min</th>
+                <th>Guard Max</th>
+                <th>Confidence</th>
+              </tr>
+            </thead>
+            <tbody id="farmAtoBody">
+              <tr><td colspan="7" style="text-align:center;color:var(--text-muted);">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section" style="margin-bottom:16px;">
+        <h3 style="cursor:pointer;" onclick="document.getElementById('farmDocsPanel').style.display=document.getElementById('farmDocsPanel').style.display==='none'?'':'none';">
+          Farming Reference <span style="font-size:0.7em;color:var(--text-muted);">&#x25BC;</span>
+        </h3>
+        <div id="farmDocsPanel" style="display:none;">
+          <div class="table-scroll" style="margin-bottom:12px;">
+            <table class="signals-table compact">
+              <thead><tr><th>Metric</th><th>Formula</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td><strong>TEF</strong></td><td>crossings/h &times; fill_prob &times; survival</td><td>Tradable Edge Frequency &mdash; real opportunity frequency filtered by depth and survival</td></tr>
+                <tr><td><strong>VWED</strong></td><td>TEF &times; avg_net_edge</td><td>Volume-Weighted Edge Density &mdash; farming yield potential</td></tr>
+                <tr><td><strong>NetCaptureBps</strong></td><td>realized_pnl_bps &minus; fees_bps</td><td>What the bot actually captures after all costs (from DB)</td></tr>
+                <tr><td><strong>SlippageBps</strong></td><td>(signal_mid &minus; fill) / mid &times; 10000</td><td>Real slippage measured between signal and fill</td></tr>
+                <tr><td><strong>ASS</strong></td><td>avg(&Delta;spread at +1s)</td><td>Adverse Selection Score &mdash; negative = na&iuml;ve entry (price moves against)</td></tr>
+                <tr><td><strong>MRS</strong></td><td>median reversion duration</td><td>Mean Reversion Speed &mdash; how fast capital is freed</td></tr>
+                <tr><td><strong>Edge Half-Life</strong></td><td>&tau; &times; ln(2)</td><td>Time for 50% of edges to disappear. If &tau; &lt; bot latency &rarr; marginal pair</td></tr>
+                <tr><td><strong>CTR</strong></td><td>(PnL/capital) / hours &times; liq_factor</td><td>Capital Turnover Rate &mdash; adjusted by liquidity capacity</td></tr>
+                <tr><td><strong>FQ</strong></td><td>VWAP fill vs top-of-book</td><td>Fill Quality &mdash; price impact and slippage vs size curve</td></tr>
+                <tr><td><strong>Correlation Risk</strong></td><td>P(signalA &cap; signalB within 5s)</td><td>Pairs sharing same underlying &mdash; accumulation risk</td></tr>
+                <tr><td><strong>Opportunity Cost</strong></td><td>hold_time &times; missed_trades</td><td>Capital lock penalty from blocked signals during open positions</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div style="margin-bottom:12px;">
+            <h4 style="font-size:0.7rem;margin:0 0 6px;">ATO (Adaptive Threshold Optimizer)</h4>
+            <div style="background:rgba(232,149,46,0.06);border:1px solid rgba(232,149,46,0.15);border-radius:8px;padding:10px 14px;font-size:0.68rem;line-height:1.7;">
+              <div><strong>Objective:</strong> ExpectedNet = (edge &minus; fees &minus; slippage &minus; adverse_selection) &times; fill_rate &times; frequency</div>
+              <div><strong>Guard Min:</strong> fees_bps + slippage_p50 + 1bps buffer</div>
+              <div><strong>Guard Max:</strong> current P50</div>
+              <div><strong>Sweep:</strong> Test each threshold from min to max by 0.5bps steps on 30min ring buffer</div>
+              <div><strong>Recalibration:</strong> Every 30-60min (not continuous, avoids overfitting)</div>
+            </div>
+          </div>
+          <div>
+            <h4 style="font-size:0.7rem;margin:0 0 6px;">Regime Detector</h4>
+            <div style="background:rgba(232,149,46,0.06);border:1px solid rgba(232,149,46,0.15);border-radius:8px;padding:10px 14px;font-size:0.68rem;line-height:1.7;">
+              <div>&#x1F7E2; <strong>Calm</strong> (&sigma; &lt; p25): Tight spread, few opportunities, predictable</div>
+              <div>&#x1F7E1; <strong>Active</strong> (p25 &le; &sigma; &le; p75): Normal conditions, good trading</div>
+              <div>&#x1F534; <strong>Explosive</strong> (&sigma; &gt; p75): High vol, big opportunities, high slippage risk</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="viewArchitecture" class="view-panel" style="display:none;">
+
+      <div class="stats-section" style="margin-bottom:20px;">
+        <h3>Execution Pipeline v40</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">Z-Score entry modes + Correlation Tier System (% margin)</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Feature</th><th>D&eacute;tails</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Entry Mode</strong></td><td>Z-Score mode (unified) with per-pair Z threshold and buffer overrides. Entry quand kalmanZ &ge; zThreshold ET edge &ge; feesRT + bufferBps. Tiers toggle ON/OFF.</td></tr>
+              <tr><td><strong>Correlation Tiers</strong></td><td>Classification par Pearson &rho; (30min window): ALL-IN (&rho; &ge; 0.97, illimit&eacute;), NORMAL (&rho; 0.90-0.97, 5% margin), PRUDENT (&rho; &lt; 0.90, 2% margin). Toggle via tiersEnabled.</td></tr>
+              <tr><td><strong>% Margin Limit</strong></td><td>Chaque paire non all-in est limit&eacute;e par un % du collateral total. Configurable par tier. All-in = illimit&eacute;</td></tr>
+              <tr><td><strong>Bulk Order</strong></td><td>1 transaction sign&eacute;e pour les 2 legs (entry + exit) &mdash; latence minimale. Max slippage 8bps.</td></tr>
+              <tr><td><strong>Orphan Unwind</strong></td><td>Si 1 leg rate: unwind imm&eacute;diat de l'autre + cooldown 15s</td></tr>
+              <tr><td><strong>minHoldMs</strong></td><td>Dur&eacute;e de d&eacute;tention minimale (d&eacute;faut 3s) avant close</td></tr>
+              <tr><td><strong>Close (BE-Based)</strong></td><td>spreadPnlBps &ge; feesRT + closeBufferBps &rarr; close. Partial close si liquidity &lt; position. Max loss safety: force close si spreadPnlBps &lt; -maxLossBps.</td></tr>
+              <tr><td><strong>6-Bot Architecture</strong></td><td>FLX/KM/CASH &times; short/long = 6 isolated execution engines, each with own wallet and API client.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>1. Pipeline Complet</h3>
+        <div class="arch-container">
+          <div class="arch-flow">
+            <div class="arch-step">
+              <div class="arch-step-num">1</div>
+              <div class="arch-step-title">WebSocket Pool</div>
+              <div class="arch-step-desc">Pool de 9 connexions WS multiplex&eacute;es vers <code>wss://api.hyperliquid.xyz/ws</code>. Subscriptions L2 orderbook par coin, r&eacute;parties automatiquement. Heartbeat 30s, reconnect exponentiel (1s &rarr; 30s max) avec jitter. D&eacute;tection stale connection (60s sans donn&eacute;es).</div>
+            </div>
+            <div class="arch-arrow">&darr;</div>
+            <div class="arch-step">
+              <div class="arch-step-num">2</div>
+              <div class="arch-step-title">Store / PairEngine</div>
+              <div class="arch-step-desc">Chaque paire a son propre Store isol&eacute; avec RingBuffer, RollingStats et SpikeTracker. Le PairEngine re&ccedil;oit les books via WS, appelle <code>computeMetrics()</code> &agrave; chaque tick, et propage les signaux aux ExecutionEngines (6 bots, rout&eacute;s par deployer + direction).</div>
+            </div>
+            <div class="arch-arrow">&darr;</div>
+            <div class="arch-step">
+              <div class="arch-step-num">3</div>
+              <div class="arch-step-title">Arbitrage Engine (arb.js)</div>
+              <div class="arch-step-desc">Calcul VWAP multi-niveaux pour chaque notional (ex: $50). Fast-path rejection si best edge &lt; 50% du seuil (skip VWAP co&ucirc;teux). Filtres: capacit&eacute; (depth), slippage max (bps), levels consum&eacute;s, spike persistence (dur&eacute;e min).</div>
+            </div>
+            <div class="arch-arrow">&darr;</div>
+            <div class="arch-step">
+              <div class="arch-step-num">4</div>
+              <div class="arch-step-title">Signal Generation</div>
+              <div class="arch-step-desc">Signal TRADEABLE &eacute;mis si: edge brut &ge; feesRT + bufferBps, kalmanZ &ge; zThreshold, capacit&eacute; OK, slippage OK, et spike persist&eacute; &ge; minSpikeMs. Signal rout&eacute; vers le bot du deployer + direction correspondant.</div>
+            </div>
+            <div class="arch-arrow">&darr;</div>
+            <div class="arch-step">
+              <div class="arch-step-num">5</div>
+              <div class="arch-step-title">Execution Engine</div>
+              <div class="arch-step-desc">V&eacute;rifications canTrade (guards), entry IOC parall&egrave;le sur 2 legs, gestion orphelins, TP dynamique, close queue par paire, reconciliation continue.</div>
+            </div>
+            <div class="arch-arrow">&darr;</div>
+            <div class="arch-step">
+              <div class="arch-step-num">6</div>
+              <div class="arch-step-title">HL API</div>
+              <div class="arch-step-desc">Wrapper du SDK Hyperliquid. Injection dynamique des deployer perps (xyz, flx, km, cash, etc.) dans le SDK. Ordres IOC, gestion leverage, balances, positions on-chain, funding. Latency ring (50 entries) pour monitoring.</div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px;font-weight:600;">Signal Flow (Z-Score entry):</div>
+            <div class="arch-signal-flow">
+              <span class="arch-sig arch-sig-fail">INSUFFICIENT_DEPTH</span>
+              <span class="arch-sig-arrow">&rarr;</span>
+              <span class="arch-sig" style="background:rgba(212,160,23,0.15);color:#d4a017;border:1px solid rgba(212,160,23,0.3);">Z_CANDIDATE</span>
+              <span class="arch-sig-arrow">&rarr;</span>
+              <span class="arch-sig" style="background:rgba(212,160,23,0.15);color:#d4a017;border:1px solid rgba(212,160,23,0.3);">Z Gate (kalmanZ &ge; threshold)</span>
+              <span class="arch-sig-arrow">&rarr;</span>
+              <span class="arch-sig" style="background:rgba(59,130,246,0.15);color:#3b82f6;border:1px solid rgba(59,130,246,0.3);">Tier Margin Check</span>
+              <span class="arch-sig-arrow">&rarr;</span>
+              <span class="arch-sig arch-sig-ok">EXECUTE</span>
+            </div>
+            <div style="font-size:10px;color:var(--text-secondary);margin-top:4px;">Entry modes: zscore, ou, kalman. TP = fees floor. Tier margin limit applied per-pair before execution.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>2. Cycle de Vie d'un Trade</h3>
+        <div class="arch-container">
+          <div class="arch-flow" style="gap:6px;">
+            <div class="arch-step" style="border-left:3px solid var(--gold);">
+              <div class="arch-step-title">&#x1F4E1; Signal TRADEABLE</div>
+              <div class="arch-step-desc">Edge brut &ge; feesRT + bufferBps ET kalmanZ &ge; zThreshold. Signal rout&eacute; au bot correspondant.</div>
+            </div>
+            <div class="arch-arrow">&darr;</div>
+            <div class="arch-step" style="border-left:3px solid var(--gold);">
+              <div class="arch-step-title">&#x1F6E1; canTrade Guards</div>
+              <div class="arch-step-desc">Bot enabled, pair enabled, tier margin limit (% collateral par paire), max global positions, coin cooldown, symbol cooldown, collat&eacute;ral OK, deployer collateral OK, pending order lock.</div>
+            </div>
+            <div class="arch-arrow">&darr;</div>
+            <div class="arch-step" style="border-left:3px solid var(--gold);">
+              <div class="arch-step-title">&#x1F680; Entry (2 legs IOC en parall&egrave;le)</div>
+              <div class="arch-step-desc"><code>Promise.allSettled([legA, legB])</code> &mdash; ordres IOC avec prix calcul&eacute; depuis le book live (VWAP best price + slippage). Si les 2 legs fill &rarr; trade enregistr&eacute; en DB. Si 1 seule fill &rarr; orphelin (close apr&egrave;s 25s). Si 0 fill &rarr; rien ins&eacute;r&eacute;.</div>
+            </div>
+            <div class="arch-arrow">&darr;</div>
+            <div class="arch-step" style="border-left:3px solid var(--gold);">
+              <div class="arch-step-title">&#x1F4CA; TP Dynamique (Take Profit)</div>
+              <div class="arch-step-desc">TP calcul&eacute; selon la Close Strategy choisie. Le spread est surveill&eacute; en continu via <code>checkAndClosePositions()</code>. Quand le spread inverse atteint le TP &rarr; trade ajout&eacute; &agrave; la close queue.</div>
+            </div>
+            <div class="arch-arrow">&darr;</div>
+            <div class="arch-step" style="border-left:3px solid var(--gold);">
+              <div class="arch-step-title">&#x1F4E4; Close Queue &amp; Execution</div>
+              <div class="arch-step-desc">Queue par paire, trait&eacute;e s&eacute;quentiellement. DB lock (<code>status='closing'</code>) avant ex&eacute;cution. 2 legs IOC en parall&egrave;le. Si 1 leg miss &rarr; fallback avec slippage &eacute;largi. Fire-and-forget DB update pour vitesse.</div>
+            </div>
+            <div class="arch-arrow">&darr;</div>
+            <div class="arch-step" style="border-left:3px solid var(--gold);">
+              <div class="arch-step-title">&#x2705; PnL &amp; Cleanup</div>
+              <div class="arch-step-desc">PnL brut calcul&eacute; (exit - entry par leg), fees calcul&eacute;es (entry + exit notional &times; pair fee rates). DB <code>status='closed'</code>. M&eacute;moire nettoy&eacute;e: <code>openPositions</code>, <code>_openTradesCache</code>, <code>_openCoinSides</code>, <code>_closingCoins</code>.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>3. Syst&egrave;me de Tiers par Corr&eacute;lation</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">Classification dynamique des paires par Pearson &rho;. Limite d'exposition en % du collateral total. Recalcul&eacute; toutes les 30s.</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Tier</th><th>Seuil &rho;</th><th>Limite</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong style="color:#22c55e;">ALL-IN</strong></td><td>&rho; &ge; 0.97</td><td>Illimit&eacute;</td><td>Paires hautement corr&eacute;l&eacute;es &mdash; aucune limite de margin par paire</td></tr>
+              <tr><td><strong style="color:#c6940a;">NORMAL</strong></td><td>0.90 &le; &rho; &lt; 0.97</td><td>5% margin</td><td>Corr&eacute;lation mod&eacute;r&eacute;e &mdash; max 5% du collateral par paire (d&eacute;faut)</td></tr>
+              <tr><td><strong style="color:#ef4444;">PRUDENT</strong></td><td>&rho; &lt; 0.90</td><td>2% margin</td><td>Corr&eacute;lation faible &mdash; max 2% du collateral par paire (d&eacute;faut)</td></tr>
+              <tr><td><strong style="color:var(--text-muted);">UNKNOWN</strong></td><td>Donn&eacute;es insuffisantes</td><td>= Prudent</td><td>Moins de 30 samples dans le ring buffer &mdash; fallback s&eacute;curitaire</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div style="margin-top:8px;font-size:11px;color:var(--text-muted);">
+          <strong>Calcul:</strong> <code>margin utilis&eacute; = (nbPositions &times; positionSizeUsd) / totalBalance &times; 100</code>. Si &ge; seuil tier &rarr; canTrade() bloque l'entr&eacute;e.
+          <br><strong>Persistence:</strong> tierConfig sauv&eacute; en DB (<code>bot_params</code>). Bouton Reset remet les d&eacute;fauts.
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>4. Position Reconciliation</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">V&eacute;rification continue que les positions DB correspondent &agrave; l'on-chain. Boucle toutes les 60s.</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>M&eacute;canisme</th><th>D&eacute;tails</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Reconciliation Loop</strong></td><td>Compare positions DB vs on-chain par bot. D&eacute;tecte PHANTOM (DB mais pas on-chain), SIZE_MISMATCH, et orphelins on-chain.</td></tr>
+              <tr><td><strong>Auto-Close Orphans</strong></td><td>Positions on-chain sans correspondance DB &rarr; fermeture automatique IOC.</td></tr>
+              <tr><td><strong>DN Status</strong></td><td><code>getDnStatus()</code> retourne l'&eacute;tat de toutes les positions ouvertes avec size/vwap/direction.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>5. Safety Guards</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">Couches de protection avant, pendant et apr&egrave;s l'ex&eacute;cution.</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Guard</th><th>Type</th><th>D&eacute;tails</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Coin Conflict</strong></td><td>Entry</td><td>Un coin ne peut &ecirc;tre ouvert que dans UNE direction (buy ou sell). V&eacute;rifie <code>_openCoinSides</code> + <code>_pendingCoinSides</code>.</td></tr>
+              <tr><td><strong>Coin Cooldown</strong></td><td>Entry</td><td>60s de blocage apr&egrave;s une erreur de close sur un coin. Pr&eacute;vient les cascades d'erreurs.</td></tr>
+              <tr><td><strong>Symbol Cooldown</strong></td><td>Entry</td><td>60s de blocage sur le symbole (ex: GOLD) apr&egrave;s un &eacute;chec de leg. Emp&ecirc;che de re-trader le m&ecirc;me sous-jacent.</td></tr>
+              <tr><td><strong>Coin Closing Lock</strong></td><td>Entry</td><td>Bloque l'entr&eacute;e si un coin est en cours de fermeture (<code>_closingCoins</code>).</td></tr>
+              <tr><td><strong>Pending Order Lock</strong></td><td>Entry</td><td><code>pendingOrders[pairId]</code> emp&ecirc;che un double-trade simultan&eacute; sur la m&ecirc;me paire.</td></tr>
+              <tr><td><strong>Margin Check</strong></td><td>Entry</td><td>V&eacute;rifie que le total (USDC+USDT+USDH) &ge; marginNeeded &times; 1.1. Refresh toutes les 2.5s.</td></tr>
+              <tr><td><strong>Deployer Collateral</strong></td><td>Entry</td><td>V&eacute;rifie le collat&eacute;ral disponible sur chaque deployer (xyz=USDC, flx/km=USDH, cash=USDT). Min $5 par d&eacute;faut.</td></tr>
+              <tr><td><strong>Tier Margin Limit</strong></td><td>Entry</td><td>% margin par paire (tier-based). ALL-IN = illimit&eacute;, NORMAL = 5%, PRUDENT = 2%. + limite globale (<code>maxGlobalPositions</code>).</td></tr>
+              <tr><td><strong>Orphan Detection</strong></td><td>Post-Entry</td><td>Si 1 seule leg fill: 25s de d&eacute;lai puis market close de la leg orpheline. V&eacute;rification on-chain avant close. Cooldown 15s sur le symbol apr&egrave;s.</td></tr>
+              <tr><td><strong>Reconciliation</strong></td><td>Continue</td><td>Toutes les 5s: compare positions DB vs on-chain. Phantom trades (DB sans on-chain) auto-ferm&eacute;s apr&egrave;s 30s. Guard <code>_pendingDbInsertCoins</code> pour &eacute;viter les faux positifs.</td></tr>
+              <tr><td><strong>Funding Guard</strong></td><td>Horaire</td><td>V&eacute;rifie le funding cumul&eacute;. Si remaining edge &lt; feesRT apr&egrave;s funding: force close. Calcul: <code>totalWalletFunding / openCount</code> par trade.</td></tr>
+              <tr><td><strong>Process Lock</strong></td><td>Syst&egrave;me</td><td>Fichier <code>.bot.lock</code> emp&ecirc;che les instances dupliqu&eacute;es. V&eacute;rifi&eacute; au d&eacute;marrage.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>6. Donn&eacute;es Persist&eacute;es vs M&eacute;moire</h3>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Donn&eacute;e</th><th>Stockage</th><th>Survit au Restart</th><th>D&eacute;tails</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Trades ouverts / ferm&eacute;s</td><td>PostgreSQL <code>bot_trades</code></td><td>&#x2705; Oui</td><td>Recharg&eacute;s au d&eacute;marrage. Trades stuck &laquo;closing&raquo; revert&eacute;s &agrave; &laquo;open&raquo;.</td></tr>
+              <tr><td>Bot enabled/disabled</td><td>PostgreSQL <code>bot_config</code></td><td>&#x2705; Oui</td><td>Cl&eacute;: <code>bot_enabled</code>, <code>bot_liquidation</code></td></tr>
+              <tr><td>Param&egrave;tres bot</td><td>PostgreSQL <code>bot_config</code></td><td>&#x2705; Oui</td><td>posSize, maxLev, marginBps, p50Mode, closeStrategy, closeMode, etc.</td></tr>
+              <tr><td>Per-pair edge floors</td><td>PostgreSQL <code>bot_config</code></td><td>&#x2705; Oui</td><td>Cl&eacute;: <code>pair_min_edge_bps</code></td></tr>
+              <tr><td>Tier config (% margin)</td><td>PostgreSQL <code>bot_config</code></td><td>&#x2705; Oui</td><td>Cl&eacute;: <code>bot_params</code> &mdash; seuils &rho; et % margin par tier</td></tr>
+              <tr><td>Paires activ&eacute;es</td><td>PostgreSQL <code>bot_config</code></td><td>&#x2705; Oui</td><td>Cl&eacute;: <code>enabled_pairs</code></td></tr>
+              <tr><td>Activity log</td><td>PostgreSQL <code>bot_activity_log</code></td><td>&#x2705; Oui</td><td>R&eacute;tention 7 jours, purge automatique</td></tr>
+              <tr><td>Edge snapshots</td><td>PostgreSQL <code>edge_snapshots</code></td><td>&#x2705; Oui</td><td>R&eacute;tention 21 jours, &eacute;chantillon toutes les 60s</td></tr>
+              <tr><td>Config paires</td><td>Fichier <code>config.json</code></td><td>&#x2705; Oui</td><td>Sauvegard&eacute; &agrave; chaque ajout/suppression de paire</td></tr>
+              <tr class="muted"><td>Coin cooldowns</td><td>M&eacute;moire</td><td>&#x274C; Non</td><td>Reset au restart. Protectif, pas critique (max 60s).</td></tr>
+              <tr class="muted"><td>Close queues</td><td>M&eacute;moire</td><td>&#x274C; Non</td><td>Reconstruit en quelques secondes par <code>checkAndClosePositions</code>.</td></tr>
+              <tr class="muted"><td>Realtime edge ring</td><td>M&eacute;moire</td><td>&#x274C; Non</td><td>Ring buffer repoussant les edges. Se remplit en minutes.</td></tr>
+              <tr class="muted"><td>Balances cach&eacute;es</td><td>M&eacute;moire</td><td>&#x274C; Non</td><td>Refresh toutes les 2.5s depuis l'API HL.</td></tr>
+              <tr class="muted"><td>Peak positions / stats</td><td>M&eacute;moire</td><td>&#x274C; Non</td><td>Cosm&eacute;tique uniquement. Donn&eacute;es historiques en DB.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>7. Formule PnL</h3>
+        <div style="background:rgba(232,149,46,0.06);border:1px solid rgba(232,149,46,0.15);border-radius:10px;padding:14px 18px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.8;">
+          <div><strong>Net PnL</strong> = Gross Trade PnL &minus; Fees &minus; Error Costs &minus; DN Adjustment Costs + Wallet Funding</div>
+          <div style="margin-top:8px;color:var(--text-muted);font-size:11px;">
+            <div>&bull; <strong>Gross Trade PnL</strong>: <code>SUM(realized_pnl_usd) WHERE status='closed'</code> &mdash; PnL brut avant fees</div>
+            <div>&bull; <strong>Fees</strong>: <code>SUM(fees_usd) WHERE status IN ('closed','open')</code> &mdash; entry + exit fees</div>
+            <div>&bull; <strong>Error Costs</strong>: <code>SUM(error_cost_usd) WHERE status IN ('error','orphan_closed','slippage_guard')</code></div>
+            <div>&bull; <strong>DN Costs</strong>: <code>SUM(error_cost_usd) WHERE status='dn_adjustment'</code></div>
+            <div>&bull; <strong>Wallet Funding</strong>: Cumul des paiements funding re&ccedil;us/pay&eacute;s via l'API HL (cache 5 min)</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>8. 6-Bot Architecture (Deployer &times; Direction)</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">6 bots isol&eacute;s: 3 deployers (FLX, KM, CASH) &times; 2 directions (short, long). Chaque bot a son wallet, execution engine, et routes API identiques.</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Aspect</th><th>D&eacute;tails</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Bot Registry</strong></td><td><code>BOT_PANEL_REGISTRY</code> &mdash; 6 entr&eacute;es: bot1 (flx-short), bot2 (flx-long), bot3 (km-short), bot4 (km-long), bot5 (cash-short), bot6 (cash-long)</td></tr>
+              <tr><td><strong>Route Registration</strong></td><td><code>registerGenericBotRoutes(app, botN, prefix)</code> &mdash; chaque bot re&ccedil;oit les m&ecirc;mes endpoints sous son pr&eacute;fixe (<code>/bot2/</code>, <code>/bot3/</code>, etc.)</td></tr>
+              <tr><td><strong>Wallets</strong></td><td>2 cl&eacute;s priv&eacute;es: <code>HL_PRIVATE_KEY</code> (wallet 1: bots 1-2), <code>HL_PRIVATE_KEY_2</code> (wallet 2: bots 3-6)</td></tr>
+              <tr><td><strong>Signal Routing</strong></td><td>Chaque paire a un deployer (FLX/KM/CASH). Les signaux sont rout&eacute;s vers le bot correspondant au deployer + direction du signal.</td></tr>
+              <tr><td><strong>WS Pool</strong></td><td>Pool partag&eacute;e de WebSockets &mdash; tous les bots re&ccedil;oivent les m&ecirc;mes feeds L2, pas de duplication.</td></tr>
+              <tr><td><strong>DB Isolation</strong></td><td><code>bot_trades WHERE bot_id='botN'</code>, config keys: <code>botN_bot_enabled</code>, <code>botN_bot_params</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>9. Super Bot Tab (6-Bot Grid)</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">Grille 3&times;2 consolid&eacute;e: FLX/KM/CASH &times; Short/Long. Vue combin&eacute;e de tous les wallets.</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Section</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Grid Layout</strong></td><td>6 panels en grille 3&times;2. Chaque panel: positions ouvertes, PnL, fees, funding, balance du bot.</td></tr>
+              <tr><td><strong>Combined Summary</strong></td><td>Barre sup&eacute;rieure avec totaux fusionn&eacute;s: positions, PnL net, fees, funding pour les 6 bots.</td></tr>
+              <tr><td><strong>Per-Bot Controls</strong></td><td>Enable/disable individuel, pair toggles, Z/Buf overrides &mdash; chaque bot est ind&eacute;pendant.</td></tr>
+              <tr><td><strong>Deployer Stats</strong></td><td>Stats par deployer (flx/km/cash): win rate, avg PnL, trade count. Endpoint: <code>GET /supervisor/deployer-stats</code>.</td></tr>
+              <tr><td><strong>D1/D2 Badges</strong></td><td><code>&lt;span class="dir-d1"&gt;D1 &uarr;&lt;/span&gt;</code> (gold) / <code>&lt;span class="dir-d2"&gt;D2 &darr;&lt;/span&gt;</code> (blue) sur chaque trade.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>10. Activity Log Enrichi</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">Chaque entr&eacute;e d'activit&eacute; contient des champs enrichis pour le diagnostic et l'analyse.</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Fonctionnalit&eacute;</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Latency (ms)</strong></td><td>Temps entre t0 (envoi ordres) et tFill (confirmation). Affich&eacute; dans chaque entr&eacute;e du feed.</td></tr>
+              <tr><td><strong>Motif</strong></td><td>Raison du trade: <code>edge_ok</code>, <code>manual</code>, <code>liquidation</code>, etc. Filtrable dans l'UI.</td></tr>
+              <tr><td><strong>Expected Spread (bps)</strong></td><td>Spread attendu au moment de l'entr&eacute;e.</td></tr>
+              <tr><td><strong>Z-Threshold</strong></td><td>Valeur du zThreshold utilis&eacute; pour la d&eacute;cision (global ou per-pair override).</td></tr>
+              <tr><td><strong>Fees Estimate</strong></td><td>Estimation des fees au moment de l'entr&eacute;e.</td></tr>
+              <tr><td><strong>Fill Sound</strong></td><td>Notification sonore sur les fills. Toggle ON/OFF dans l'UI (&#x1F50A;).</td></tr>
+              <tr><td><strong>Motif Filters</strong></td><td>Boutons de filtre par motif dans la barre d'activit&eacute; (alongside type filters).</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>11. Historique Complet (Full History Viewer)</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">Acc&egrave;s &agrave; l'historique complet de l'activit&eacute; depuis la DB, au-del&agrave; des 30 derni&egrave;res lignes du feed live.</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Fonctionnalit&eacute;</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Feed Live</strong></td><td>30 derni&egrave;res entr&eacute;es en temps r&eacute;el (l&eacute;ger).</td></tr>
+              <tr><td><strong>Modal Historique</strong></td><td>Bouton &laquo;Historique complet&raquo; ouvre un modal avec recherche pagin&eacute;e.</td></tr>
+              <tr><td><strong>Endpoint</strong></td><td><code>GET /bot/activity-history?page=1&amp;limit=100&amp;pair=&amp;type=&amp;motif=&amp;from=&amp;to=</code></td></tr>
+              <tr><td><strong>Filtres</strong></td><td>Paire, type, motif, plage de dates. Recherche dans les messages d'erreur.</td></tr>
+              <tr><td><strong>Pagination</strong></td><td>100 entr&eacute;es par page, navigation pr&eacute;c&eacute;dent/suivant.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>12. Table des Erreurs</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">Section d&eacute;di&eacute;e dans Bot Stats pour analyser et regrouper les erreurs.</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Fonctionnalit&eacute;</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Affichage</strong></td><td>Timestamp, paire, type d'erreur, raison, slippage, co&ucirc;t.</td></tr>
+              <tr><td><strong>Regroupement</strong></td><td>Group&eacute; par cause racine: <code>orphan</code>, <code>both_failed</code>, <code>slippage_guard</code>, avec compteurs.</td></tr>
+              <tr><td><strong>Filtres</strong></td><td>Par type d'erreur et plage de temps.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>13. Fee Drift Monitoring</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">Comparaison fees attendus vs r&eacute;alis&eacute;s pour d&eacute;tecter les d&eacute;rives.</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Fonctionnalit&eacute;</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Expected Fees</strong></td><td>Calcul&eacute; via <code>getPairFeeRoundTripBps</code> &agrave; l'entr&eacute;e du trade, stock&eacute; en DB (<code>expected_fees_usd</code>).</td></tr>
+              <tr><td><strong>Endpoint</strong></td><td><code>GET /bot/fee-drift</code> &mdash; daily + 50 derniers trades, expected vs realized.</td></tr>
+              <tr><td><strong>UI</strong></td><td>Section &laquo;Expected vs Realized Fee&raquo; dans Bot Stats, couleur selon le drift.</td></tr>
+              <tr><td><strong>Alerte</strong></td><td>Banni&egrave;re si drift moyen &gt; 0.5 bps.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>14. Charts Tab</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">Onglet de visualisation interactif bas&eacute; sur Chart.js.</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Chart</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Peg Monitor</strong></td><td>Prix par token depuis chaque deployer en s&eacute;ries. D&eacute;viation peg = max(prix) - min(prix) dans le temps. Sources: <code>mid_a</code>/<code>mid_b</code> des edge_snapshots.</td></tr>
+              <tr><td><strong>Vol-Adjusted Spread</strong></td><td>Signed spread: <code>midA − midB</code> in bps. Three modes: <strong>Static Z</strong> = <code>(spread − mean) / σ</code> (window=20), <strong>OU</strong> = Ornstein-Uhlenbeck fit (θ, μ, σ), <strong>Kalman</strong> = 1D Kalman filter. ±2σ bands shown. z &gt; +2 → D2 signal, z &lt; −2 → D1 signal.</td></tr>
+              <tr><td><strong>Edge Over Time</strong></td><td><code>liveSpreadBps - entryThresholdBps</code> par paire depuis edge_snapshots.</td></tr>
+              <tr><td><strong>Contr&ocirc;les</strong></td><td>S&eacute;lecteur de paire/token, fen&ecirc;tre temporelle: 1h, 4h, 12h, 24h.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>15. Dust Cleaner</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">D&eacute;tection et nettoyage des positions r&eacute;siduelles (dust).</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>M&eacute;canisme</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>D&eacute;tection</strong></td><td>Dust = <code>leg_size &lt; baseEntrySize &times; dustFactor</code> (d&eacute;faut 0.1). Scan des trades ouverts.</td></tr>
+              <tr><td><strong>Endpoints</strong></td><td><code>GET /bot/dust</code>, <code>POST /bot/dust/close/:tradeId</code>, <code>POST /bot/dust/close-all</code></td></tr>
+              <tr><td><strong>UI</strong></td><td>Panel &laquo;Dust Cleaner&raquo; dans Bot tab. Liste + boutons Close / Close All.</td></tr>
+              <tr><td><strong>S&eacute;curit&eacute;</strong></td><td>Respecte les locks <code>_closingTrade</code>, <code>_closingCoins</code>. Pas de conflit avec les closes normaux.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>16. Stable Rebalance Configurable</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">Gestion automatique des ratios de collat&eacute;ral (USDC/USDT/USDH).</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Param&egrave;tre</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Target Ratios</strong></td><td><code>stableTargets: { usdc: 0.6, usdt: 0.2, usdh: 0.2 }</code> &mdash; configurable.</td></tr>
+              <tr><td><strong>Drift Threshold</strong></td><td>Seuil de d&eacute;clenchement du rebalance (d&eacute;faut: 10%).</td></tr>
+              <tr><td><strong>Endpoints</strong></td><td><code>GET /bot/stable-balances</code>, <code>POST /bot/stable-rebalance</code></td></tr>
+              <tr><td><strong>UI</strong></td><td>Panel avec balances actuelles, targets, drift, boutons d'action.</td></tr>
+              <tr><td><strong>Protection</strong></td><td>N'interrompt pas le bot sauf drift critique.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>17. SSE Live Events</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">&Eacute;v&eacute;nements en temps r&eacute;el via Server-Sent Events (SSE).</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>&Eacute;v&eacute;nement</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>ENTRY_FILLED</code></td><td>&Eacute;mis quand un trade d'entr&eacute;e est ex&eacute;cut&eacute; avec succ&egrave;s.</td></tr>
+              <tr><td><code>ENTRY_FAILED</code></td><td>&Eacute;mis quand un trade d'entr&eacute;e &eacute;choue.</td></tr>
+              <tr><td><code>CLOSE_SUBMITTED</code></td><td>&Eacute;mis quand un close est envoy&eacute;.</td></tr>
+              <tr><td><code>CLOSE_FILLED</code></td><td>&Eacute;mis quand un close est confirm&eacute;.</td></tr>
+              <tr><td><code>CLOSE_FAILED</code></td><td>&Eacute;mis quand un close &eacute;choue.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="color:var(--text-muted);font-size:11px;margin:6px 0 0;">Endpoint: <code>GET /bot/events</code>. Le frontend s'abonne automatiquement. Fallback polling en cas de d&eacute;connexion.</p>
+      </div>
+
+      <div class="stats-section">
+        <h3>18. Pool Ranking &amp; Allocation Advisor</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">Classement des pools et recommandation d'allocation de capital.</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Fonctionnalit&eacute;</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Hold Time Metrics</strong></td><td>Par paire (closed trades): avg, median, p90 hold time.</td></tr>
+              <tr><td><strong>Best Pools</strong></td><td>Score = <code>PnL_per_volume &times; fillRate / avgHoldTime</code>. Endpoint: <code>GET /bot/pool-ranking</code>.</td></tr>
+              <tr><td><strong>Allocation Advisor</strong></td><td>Inputs: capital total, max levier, pr&eacute;f&eacute;rence risque. Utilise les m&eacute;triques + taux d'erreur.</td></tr>
+              <tr><td><strong>Output</strong></td><td>$ recommand&eacute; par paire avec justification.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>19. Config Sections &amp; DN Compact</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">Am&eacute;liorations UX de la configuration et du monitoring DN.</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Am&eacute;lioration</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Config Group&eacute;e</strong></td><td>Sections: Trading, Risk, Close, Fees, Advanced. Groupement logique des param&egrave;tres.</td></tr>
+              <tr><td><strong>DN Compact</strong></td><td>Output une ligne: &laquo;N checked, M imbalances, K corrections&raquo;. Expandable pour les d&eacute;tails.</td></tr>
+              <tr><td><strong>Close Latency</strong></td><td>Histogramme avg/p50/p95 dans Bot tab. Tracking via ring de latences.</td></tr>
+              <tr><td><strong>Defaults</strong></td><td>Valeurs par d&eacute;faut affich&eacute;es dans les tooltips de chaque param&egrave;tre.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>20. Pair Management UI</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">Gestion compl&egrave;te des paires d'arbitrage depuis l'interface.</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Fonctionnalit&eacute;</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Formulaire</strong></td><td>Dans Data tab: champs deployer A, deployer B (format <code>flx:SILVER</code>).</td></tr>
+              <tr><td><strong>Liste</strong></td><td>Paires existantes avec boutons de suppression individuels.</td></tr>
+              <tr><td><strong>Pair+ Scanner</strong></td><td>Scan Hyperliquid pour d&eacute;couvrir les paires HIP3 disponibles. S&eacute;lection multiple + ajout batch.</td></tr>
+              <tr><td><strong>Persistence</strong></td><td>Utilise <code>/pairs/add</code> + <code>/pairs/remove</code>. Sauvegard&eacute; dans <code>config.json</code>.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>21. Fichiers Cl&eacute;s (mis &agrave; jour)</h3>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Fichier</th><th>R&ocirc;le</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>src/index.js</code></td><td>Serveur Express, routes API, PairEngine, BOT_PANEL_REGISTRY, registerGenericBotRoutes, 1s scheduler, ATO, orchestration globale, SSE events, init 6 bots</td></tr>
+              <tr><td><code>src/execution.js</code></td><td>ExecutionEngine: signal &rarr; trade, BE-based close (feesRT + closeBufferBps), bulk order entry/close, orphan unwind, reconciliation, funding guard, dust cleaner, stable rebalance, adverse selection tracking</td></tr>
+              <tr><td><code>src/arb.js</code></td><td>Calcul VWAP multi-niveaux, edge brut/net, filtres capacit&eacute;/slippage/spike, extraction signaux</td></tr>
+              <tr><td><code>src/hl_api.js</code></td><td>Wrapper SDK Hyperliquid: ordres (IOC, bulk, limit), balances, positions deployers, funding, fees, asset index injection</td></tr>
+              <tr><td><code>src/hl_ws.js</code></td><td>Pool de WebSocket multiplex&eacute;es: subscriptions L2 book, heartbeat, reconnect exponentiel, stale detection</td></tr>
+              <tr><td><code>src/store.js</code></td><td>State management par paire: RingBuffer, RollingStats, SpikeTracker, spread history, signal buffer</td></tr>
+              <tr><td><code>src/orderbook.js</code></td><td>VWAP (buy/sell), VWAP multi-notional, midPrice, parseBook WS</td></tr>
+              <tr><td><code>src/db.js</code></td><td>PostgreSQL: tables (bot_trades w/ AS columns, edge_snapshots, bot_config, bot_activity_log), migrations, queries, purge</td></tr>
+              <tr><td><code>src/tz.js</code></td><td>Timezone Europe/Paris: <code>getParisTime()</code> pour timezone-aware logging et hourly scheduling</td></tr>
+              <tr><td><code>src/backtest.js</code></td><td>Backtest offline depuis CSV signals. Routes <code>/backtest</code>.</td></tr>
+              <tr><td><code>src/botRoutes.js</code></td><td>registerGenericBotRoutes: factory qui cr&eacute;e les m&ecirc;mes endpoints pour chaque bot (status, enable, params, trades, pair-toggles, overrides)</td></tr>
+              <tr><td><code>public/index.html</code></td><td>Dashboard HTML: vues Overview, Data, Bot 1-6, Bot Stats 1-6, Charts, Farming, Super Bot, Architecture</td></tr>
+              <tr><td><code>public/app.js</code></td><td>Client JS: polling API, SSE events, rendu dynamique, 6-bot panels, Chart.js (all-pairs grid, OU/Kalman), farming dashboard, ATO panel</td></tr>
+              <tr><td><code>public/botPanelTemplate.js</code></td><td>Template factory pour les panels bot 1-6: g&eacute;n&egrave;re le HTML identique pour chaque bot avec pr&eacute;fixe dynamique</td></tr>
+              <tr><td><code>public/styles.css</code></td><td>Theme soleil neobank: glass cards, gold accents, D1/D2 badges, 6-bot grid Super Bot, responsive, orbs anim&eacute;s</td></tr>
+              <tr><td><code>config.json</code></td><td>Configuration des paires, notionals, seuils globaux, stable targets</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>22. 1-Second Global Scheduler</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">Scheduler align&eacute; sur l'horloge murale pour &eacute;chantillonner toutes les paires &agrave; la m&ecirc;me seconde.</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Param&egrave;tre</th><th>D&eacute;tails</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Intervalle</strong></td><td><code>setInterval(1000)</code> d&eacute;marr&eacute; &agrave; la fronti&egrave;re de seconde la plus proche (align&eacute; wall-clock).</td></tr>
+              <tr><td><strong>Ring Buffer</strong></td><td>Taille 3600 = 1 heure de donn&eacute;es &agrave; 1 sample/s par paire. Stock&eacute; sur <code>engine.ringBuffer1s</code>.</td></tr>
+              <tr><td><strong>Champs</strong></td><td><code>ts, midA, midB, dir1EdgeBps, dir2EdgeBps, maxEdgeBps, midSpreadBps, bestBidA, bestAskA, bestBidB, bestAskB, intraCostAbps, intraCostBbps, depthA_2bps, depthB_2bps</code></td></tr>
+              <tr><td><strong>Depth</strong></td><td><code>depthA_2bps</code> / <code>depthB_2bps</code>: taille disponible en USD dans &plusmn;2bps du mid (pour TEF et fill probability).</td></tr>
+              <tr><td><strong>Endpoints</strong></td><td><code>GET /bot/chart-data-1s/:pairId?seconds=300</code> (1 paire) et <code>GET /bot/chart-data-all-1s?seconds=300</code> (toutes les paires). Cap &agrave; 3600s. Downsampling pour &gt; 600s.</td></tr>
+              <tr><td><strong>Payload Control</strong></td><td>Format compact: <code>{ pairs: { [pairId]: { labels, midA, midB, d1, d2 } } }</code>. ~200KB pour 30 paires &times; 300s.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>23. Vol-Adjusted Spread (Signed + Z-score/OU/Kalman)</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">Spread sign&eacute; avec trois modes d'analyse statistique.</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Mode</th><th>Formule</th><th>Interpr&eacute;tation</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Signed Spread</strong></td><td><code>spreadBps = midA &minus; midB</code> (en bps)</td><td>Positif = A cher (D2), n&eacute;gatif = B cher (D1). Convention directionnelle pr&eacute;serv&eacute;e.</td></tr>
+              <tr><td><strong>Static Z</strong></td><td><code>z = (spread &minus; rolling_mean) / rolling_std</code>, window = 20 samples</td><td>z &gt; +2 &rarr; fort signal D2 (vendre A, acheter B). z &lt; &minus;2 &rarr; fort signal D1.</td></tr>
+              <tr><td><strong>OU (Ornstein-Uhlenbeck)</strong></td><td>Fit &theta; (vitesse retour), &mu; (moyenne), &sigma;_ou. Plot <code>(spread &minus; &mu;) / &sigma;_ou</code></td><td>Montre la vitesse de mean-reversion. &theta; &eacute;lev&eacute; = retour rapide &agrave; la moyenne.</td></tr>
+              <tr><td><strong>Kalman</strong></td><td>Filtre Kalman 1D sur le spread. Plot <code>(spread &minus; kalman_estimate) / kalman_uncertainty</code></td><td>Plus lisse, adaptatif. Filtre le bruit de march&eacute;.</td></tr>
+              <tr><td><strong>&plusmn;2&sigma; Bands</strong></td><td>Lignes rouges pointill&eacute;es &agrave; &plusmn;2 sur tous les modes</td><td>Zones d'opportunit&eacute; de trading. D&eacute;passement = signal potentiel.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>24. Charts &mdash; All-Pairs Grid</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">Grille de charts pour toutes les paires simultan&eacute;ment. Donn&eacute;es 1s ou DB selon la fen&ecirc;tre.</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Fonctionnalit&eacute;</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Layout</strong></td><td>Grille scrollable, 2 colonnes (desktop) / 1 colonne (mobile). Chaque paire = glass card avec header + badges deployer.</td></tr>
+              <tr><td><strong>Price Chart</strong></td><td>Deployer A vs Deployer B mid price lines superpos&eacute;es. Annotation prix courant &agrave; droite.</td></tr>
+              <tr><td><strong>Vol-Adjusted Spread</strong></td><td>Sous le price chart, avec toggle mode (Static Z / OU / Kalman).</td></tr>
+              <tr><td><strong>Fen&ecirc;tres temps</strong></td><td>1-second data: 5m | 15m | 30m | 1h. DB data (per-minute): 4h | 12h | 24h.</td></tr>
+              <tr><td><strong>Deployer Colors</strong></td><td><code>flx: #06b6d4, xyz: #c084fc, cash: #f472b6, km: #fb923c, vntl: #a3e635, hyna: #f87171, abcd: #facc15</code></td></tr>
+              <tr><td><strong>Auto-refresh</strong></td><td>Toutes les 5 secondes via <code>/bot/chart-data-all-1s?seconds=N</code>.</td></tr>
+              <tr><td><strong>Edge Over Time</strong></td><td>Chart s&eacute;par&eacute; avec s&eacute;lecteur de paire pour deep dive.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-section">
+        <h3>25. Farming Mode Integration</h3>
+        <p style="color:var(--text-muted);font-size:11px;margin:-6px 0 10px;">Farming metrics (TEF, VWED, ASS, ATO) overlay the execution pipeline. See Farming tab for full reference.</p>
+        <div class="table-scroll">
+          <table class="signals-table compact">
+            <thead>
+              <tr><th>Aspect</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Pipeline Position</strong></td><td>Signal TRADEABLE &rarr; canTrade guards &rarr; Z-Score gate (kalmanZ &ge; zThreshold) &rarr; Edge check (edge &ge; feesRT + bufferBps) &rarr; Bulk order entry.</td></tr>
+              <tr><td><strong>Entry Mode</strong></td><td>Unified Z-Score mode. Per-pair Z threshold and buffer overrides via pair management UI. Tiers toggle enables/disables correlation-based margin limits.</td></tr>
+              <tr><td><strong>Z-Score Logic</strong></td><td>Kalman filter per pair (60s window). KalmanZ = innovation / uncertainty. Per-pair <code>zThreshold</code> override (0 = use global).</td></tr>
+              <tr><td><strong>Bulk Order</strong></td><td>Entry + close both use <code>placeBulkOrderNative</code> &mdash; 1 HTTP call for both legs. Max slippage 8bps.</td></tr>
+              <tr><td><strong>Orphan Unwind</strong></td><td>1-leg fill at entry &rarr; immediate reverse order (0.3% slippage IOC). On-chain orphans tracked 60s then auto-closed.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+  <div id="activityHistoryModal" class="history-modal-overlay" style="display:none;" onclick="if(event.target===this)closeActivityHistoryModal()">
+    <div class="history-modal">
+      <div class="history-modal-header">
+        <h3>&#x1F4CB; Historique complet d'activit&eacute;</h3>
+        <button class="history-modal-close" onclick="closeActivityHistoryModal()">&times;</button>
+      </div>
+      <div class="history-modal-filters">
+        <div class="history-filter-row">
+          <select id="histFilterPair" onchange="loadActivityHistory(1)">
+            <option value="">Toutes les paires</option>
+          </select>
+          <select id="histFilterType" onchange="loadActivityHistory(1)">
+            <option value="">Tous les types</option>
+            <option value="filled">Filled</option>
+            <option value="accepted">Accepted</option>
+            <option value="reject">Reject</option>
+            <option value="blocked">Blocked</option>
+            <option value="error">Error</option>
+            <option value="failed">Failed</option>
+            <option value="win">Win</option>
+            <option value="loss">Loss</option>
+            <option value="funding_close">Funding Close</option>
+            <option value="margin_fail">Margin Fail</option>
+            <option value="auto_disable">Auto Disable</option>
+            <option value="halt">Halt</option>
+            <option value="recap">Recap</option>
+          </select>
+          <select id="histFilterMotif" onchange="loadActivityHistory(1)">
+            <option value="">Tous les motifs</option>
+            <option value="edge_ok">edge_ok</option>
+            <option value="manual">manual</option>
+            <option value="converge_close">converge_close</option>
+            <option value="stop_loss">stop_loss</option>
+            <option value="funding_close">funding_close</option>
+            <option value="force_close">force_close</option>
+            <option value="slippage_guard">slippage_guard</option>
+            <option value="orphan_leg">orphan_leg</option>
+          </select>
+          <input type="text" id="histFilterSearch" placeholder="Rechercher..." onkeydown="if(event.key==='Enter')loadActivityHistory(1)" style="padding:6px 10px;border-radius:var(--radius-sm);border:1px solid var(--border-secondary);background:var(--bg-input);color:var(--text-primary);font-size:0.75rem;width:160px;">
+          <button class="btn-sm btn-start" onclick="loadActivityHistory(1)">Filtrer</button>
+        </div>
+        <div class="history-filter-row" style="margin-top:6px;">
+          <label style="font-size:0.7rem;color:var(--text-muted);">Du:</label>
+          <input type="datetime-local" id="histFilterFrom" onchange="loadActivityHistory(1)" style="padding:4px 8px;border-radius:var(--radius-sm);border:1px solid var(--border-secondary);background:var(--bg-input);color:var(--text-primary);font-size:0.72rem;">
+          <label style="font-size:0.7rem;color:var(--text-muted);">Au:</label>
+          <input type="datetime-local" id="histFilterTo" onchange="loadActivityHistory(1)" style="padding:4px 8px;border-radius:var(--radius-sm);border:1px solid var(--border-secondary);background:var(--bg-input);color:var(--text-primary);font-size:0.72rem;">
+          <button class="btn-sm" onclick="clearHistoryFilters()">R&eacute;initialiser</button>
+          <span id="histResultCount" style="font-size:0.7rem;color:var(--text-muted);margin-left:auto;"></span>
+        </div>
+      </div>
+      <div class="history-modal-body">
+        <div class="table-scroll" style="max-height:60vh;overflow-y:auto;">
+          <table class="signals-table compact">
+            <thead>
+              <tr>
+                <th>Date/Heure</th>
+                <th>Type</th>
+                <th>Paire</th>
+                <th>Dir</th>
+                <th>Motif</th>
+                <th>Latence</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody id="historyTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="history-modal-footer">
+        <button class="btn-sm" id="histPrevBtn" onclick="loadActivityHistory(_histPage-1)" disabled>&laquo; Pr&eacute;c&eacute;dent</button>
+        <span id="histPageInfo" style="font-size:0.72rem;color:var(--text-secondary);">Page 1/1</span>
+        <button class="btn-sm" id="histNextBtn" onclick="loadActivityHistory(_histPage+1)" disabled>Suivant &raquo;</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=49"></script>
+</body>
+</html>
