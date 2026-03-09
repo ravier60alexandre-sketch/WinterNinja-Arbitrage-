@@ -29,6 +29,10 @@ function loadBots() {
     if (existsSync(BOTS_PATH)) {
       const data = JSON.parse(readFileSync(BOTS_PATH, 'utf8'));
       if (data.bots && data.bots.length > 0) {
+        // Ensure api_key_masked field exists on all bots (migration)
+        for (const bot of data.bots) {
+          if (bot.api_key_masked === undefined) bot.api_key_masked = '';
+        }
         return data;
       }
     }
@@ -71,6 +75,7 @@ function initDefaultBots() {
     },
     pairs: getDefaultPairs(d.pair_b),
     tiers_enabled: true,
+    api_key_masked: '',
   }));
 
   const data = { bots, global_stats: defaultGlobalStats() };
@@ -140,6 +145,20 @@ export async function GET() {
   // Try FastAPI backend first — validate it returns the expected 6-bot format
   const backendData = await fetchFromBackend('/api/v1/bots');
   if (backendData?.bots?.length > 0 && backendData.bots[0].exchange) {
+    // Merge locally-stored fields (api_key_masked, wallet, sub_account) that
+    // may have been set via the dashboard UI but aren't in the backend yet
+    try {
+      const local = loadBots();
+      const localMap = Object.fromEntries(local.bots.map(b => [b.id, b]));
+      for (const bot of backendData.bots) {
+        const lb = localMap[bot.id];
+        if (lb) {
+          if (!bot.api_key_masked && lb.api_key_masked) bot.api_key_masked = lb.api_key_masked;
+          if (!bot.wallet && lb.wallet) bot.wallet = lb.wallet;
+          if (!bot.sub_account && lb.sub_account) bot.sub_account = lb.sub_account;
+        }
+      }
+    } catch (e) {}
     return Response.json(backendData);
   }
 
