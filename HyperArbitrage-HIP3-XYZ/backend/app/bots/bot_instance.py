@@ -52,8 +52,7 @@ class BotInstance(BaseBot):
         self._stop_event = asyncio.Event()
         self._fill_queue: asyncio.Queue = asyncio.Queue(maxlen=100)
         self._tasks: list[asyncio.Task] = []
-        self._has_open_position = False
-        self._open_trade: dict | None = None
+        self._open_trades: list[dict] = []
         self._last_fee_refresh: float = 0.0
 
     async def start(self) -> None:
@@ -163,9 +162,13 @@ class BotInstance(BaseBot):
 
         min_edge_bps = Decimal(str(self._config.get("min_edge_bps", 2)))
 
-        if self._has_open_position and self._open_trade is not None:
-            await self._check_exit(mid_a, mid_b, fees_roundtrip, slippage_margin, edge)
-        else:
+        # Check exits on all open trades
+        for trade in self._open_trades[:]:
+            await self._check_exit_trade(trade, mid_a, mid_b, fees_roundtrip, slippage_margin, edge)
+
+        # Check entry if below max concurrent positions
+        max_concurrent = self._config.get("max_concurrent_positions", 10)
+        if len(self._open_trades) < max_concurrent:
             await self._check_entry(
                 mid_a, mid_b, edge, min_edge_bps,
                 fees_roundtrip, slippage_margin, max_slippage_ticks, sample
@@ -232,8 +235,7 @@ class BotInstance(BaseBot):
             logger.warning("entry_not_filled", bot_id=self.bot_id)
             return
 
-        self._has_open_position = True
-        self._open_trade = {
+        trade = {
             "entry_time": datetime.now(UTC),
             "entry_price_a": result_a.price,
             "entry_price_b": result_b.price,
@@ -246,6 +248,7 @@ class BotInstance(BaseBot):
             "slippage_b": result_b.slippage,
             "fees_entry": fees_roundtrip / 2,
         }
+        self._open_trades.append(trade)
 
         logger.info(
             "trade_opened",
@@ -254,20 +257,18 @@ class BotInstance(BaseBot):
             entry_b=str(result_b.price),
             size=str(size),
             edge=str(edge),
+            open_count=len(self._open_trades),
         )
 
-    async def _check_exit(
+    async def _check_exit_trade(
         self,
+        trade: dict,
         mid_a: Decimal,
         mid_b: Decimal,
         fees_roundtrip: Decimal,
         slippage_margin: Decimal,
         current_edge: Decimal,
     ) -> None:
-        trade = self._open_trade
-        if trade is None:
-            return
-
         net_pnl = self.position_manager.compute_net_pnl(
             entry_price_a=trade["entry_price_a"],
             entry_price_b=trade["entry_price_b"],
@@ -298,16 +299,15 @@ class BotInstance(BaseBot):
         close_reason = "on_profit" if not reverse_signal else "on_reverse"
 
         if closed:
+            self._open_trades.remove(trade)
             logger.info(
                 "trade_closed",
                 bot_id=self.bot_id,
                 net_pnl=str(net_pnl),
                 close_reason=close_reason,
+                remaining_open=len(self._open_trades),
             )
-            self._has_open_position = False
-            self._open_trade = None
         else:
-            # Position still (partially) open — will retry next tick
             logger.error(
                 "trade_close_failed_will_retry",
                 bot_id=self.bot_id,
