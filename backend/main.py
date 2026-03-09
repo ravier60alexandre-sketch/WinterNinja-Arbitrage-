@@ -51,8 +51,17 @@ class DashboardLogHandler(logging.Handler):
 _dash_handler = DashboardLogHandler()
 _dash_handler.setLevel(logging.DEBUG)
 _dash_handler.setFormatter(logging.Formatter("%(message)s"))
-for _logger_name in ("bot_engine", "bot_manager", "uvicorn"):
-    logging.getLogger(_logger_name).addHandler(_dash_handler)
+
+# Also add a StreamHandler so logs appear in PM2 stdout
+_stream_handler = logging.StreamHandler()
+_stream_handler.setLevel(logging.DEBUG)
+_stream_handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
+
+for _logger_name in ("bot_engine", "bot_manager", "deployer_perps"):
+    _lg = logging.getLogger(_logger_name)
+    _lg.setLevel(logging.DEBUG)
+    _lg.addHandler(_dash_handler)
+    _lg.addHandler(_stream_handler)
 
 DATA_DIR = _root / "data"
 DB_PATH = DATA_DIR / "bots.db"
