@@ -837,7 +837,8 @@ class BotEngine:
     ) -> tuple[OrderResult | None, OrderResult | None]:
         """Execute two orders simultaneously via bulk order.
 
-        Uses dynamic szDecimals and slippage based on best price (matching Replit bot).
+        Uses dynamic szDecimals and aggressive pricing based on best bid/ask
+        to ensure IOC orders cross the spread and match resting orders.
         """
         if not self._exchange:
             logger.error(f"[Bot {self.bot_id}] No exchange connection")
@@ -859,18 +860,24 @@ class BotEngine:
             logger.warning(f"[Bot {self.bot_id}] Size rounds to 0 for {coin} (sz_dec_a={sz_dec_a}, sz_dec_b={sz_dec_b})")
             return None, None
 
-        # Compute limit prices with slippage (matching Replit: best_price * (1 +/- maxSlippageBps/10000))
+        # Use best bid/ask (not mid) as base price for IOC orders to ensure they
+        # cross the spread.  Buy  → base on best_ask, Sell → base on best_bid.
         slip_factor = self.config.max_slippage_bps / 10000
+        book_a, book_b = self._get_books_for_coin(coin)
 
         if side_a == "buy":
-            price_a = mid_a * (1 + slip_factor)
+            best_ask_a = book_a.get("asks", [[mid_a]])[0][0] if book_a.get("asks") else mid_a
+            price_a = best_ask_a * (1 + slip_factor)
         else:
-            price_a = mid_a * (1 - slip_factor)
+            best_bid_a = book_a.get("bids", [[mid_a]])[0][0] if book_a.get("bids") else mid_a
+            price_a = best_bid_a * (1 - slip_factor)
 
         if side_b == "buy":
-            price_b = mid_b * (1 + slip_factor)
+            best_ask_b = book_b.get("asks", [[mid_b]])[0][0] if book_b.get("asks") else mid_b
+            price_b = best_ask_b * (1 + slip_factor)
         else:
-            price_b = mid_b * (1 - slip_factor)
+            best_bid_b = book_b.get("bids", [[mid_b]])[0][0] if book_b.get("bids") else mid_b
+            price_b = best_bid_b * (1 - slip_factor)
 
         for attempt in range(self.config.order_retries):
             try:
