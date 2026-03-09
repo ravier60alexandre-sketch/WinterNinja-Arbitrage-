@@ -297,16 +297,23 @@ class BotInstance(BaseBot):
 
         close_reason = "on_profit" if not reverse_signal else "on_reverse"
 
-        logger.info(
-            "trade_closed",
-            bot_id=self.bot_id,
-            net_pnl=str(net_pnl),
-            close_reason=close_reason,
-            closed=closed,
-        )
-
-        self._has_open_position = False
-        self._open_trade = None
+        if closed:
+            logger.info(
+                "trade_closed",
+                bot_id=self.bot_id,
+                net_pnl=str(net_pnl),
+                close_reason=close_reason,
+            )
+            self._has_open_position = False
+            self._open_trade = None
+        else:
+            # Position still (partially) open — will retry next tick
+            logger.error(
+                "trade_close_failed_will_retry",
+                bot_id=self.bot_id,
+                net_pnl=str(net_pnl),
+                close_reason=close_reason,
+            )
 
     def update_config(self, config: dict) -> None:
         self._config.update(config)
