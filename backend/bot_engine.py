@@ -452,9 +452,8 @@ class BotEngine:
         # Orderbook state — per HiP-3 symbol (e.g., "xyz:SILVER")
         self._books: dict[str, dict] = {}
 
-        # Open position tracking
-        self._has_position = False
-        self._open_trade: dict | None = None
+        # Open position tracking — multiple simultaneous positions keyed by coin
+        self._open_trades: dict[str, dict] = {}  # coin -> trade dict
 
         # Funding state — per coin
         self._funding_blocked_coins: set[str] = set()
@@ -1053,7 +1052,6 @@ class BotEngine:
 
         best_net_edge = None
         best_coin = None
-        best_metrics = None
         best_direction = None  # "long" or "short"
 
         min_edge = self.config.min_edge_bps
@@ -1063,6 +1061,9 @@ class BotEngine:
         coins_with_books = 0
         coins_fast_rejected = 0
         coins_no_books = 0
+
+        # Collect all eligible coins for entry (multi-position support)
+        eligible_entries: list[tuple[str, dict, str, float]] = []  # (coin, metrics, direction, edge)
 
         for coin in self._enabled_pairs:
             # Skip coins with funding block
@@ -1094,8 +1095,11 @@ class BotEngine:
             if best_net_edge is None or edge > best_net_edge:
                 best_net_edge = edge
                 best_coin = coin
-                best_metrics = metrics
                 best_direction = direction
+
+            # Track eligible entries (not already in position, above threshold)
+            if coin not in self._open_trades and edge >= min_edge:
+                eligible_entries.append((coin, metrics, direction, edge))
 
         # ── Periodic diagnostic log (every 30s) ──
         now = time.time()
@@ -1112,28 +1116,31 @@ class BotEngine:
                 f"with_data={coins_with_books} no_books={coins_no_books} fast_rej={coins_fast_rejected} "
                 f"best_edge={best_net_edge:.2f}bps/{best_coin} "
                 f"best_ever={self._best_edge_seen:.2f}bps/{self._best_edge_coin} "
-                f"min_edge={min_edge}bps has_pos={self._has_position}"
+                f"min_edge={min_edge}bps open={len(self._open_trades)}"
             ) if best_net_edge is not None else logger.info(
                 f"[Bot {self.bot_id}] DIAG tick={self._tick_count} "
                 f"books={n_books}/{total_pairs} ws_msgs={self._books_received} "
                 f"with_data={coins_with_books} no_books={coins_no_books} fast_rej={coins_fast_rejected} "
                 f"NO EDGE FOUND — best_ever={self._best_edge_seen:.2f}bps/{self._best_edge_coin} "
-                f"min_edge={min_edge}bps has_pos={self._has_position}"
+                f"min_edge={min_edge}bps open={len(self._open_trades)}"
             )
             self._last_diag_log = now
 
         if best_net_edge is None:
             return
 
-        if self._has_position and self._open_trade:
-            # Check exit on the coin we're currently holding
-            open_coin = self._open_trade["coin"]
+        # Check exits on ALL open positions
+        for open_coin in list(self._open_trades):
             open_metrics = self._compute_vwap_spread(open_coin)
             if open_metrics and not open_metrics.get("fast_rejected"):
                 self._add_spread_sample(open_coin, open_metrics)
                 await self._check_exit_vwap(open_coin, open_metrics)
-        else:
-            await self._check_entry_vwap(best_coin, best_metrics, best_direction, min_edge)
+
+        # Check entry on ALL eligible coins (sorted by edge, best first)
+        eligible_entries.sort(key=lambda x: x[3], reverse=True)
+        for coin, coin_metrics, direction, edge in eligible_entries:
+            if coin not in self._open_trades:  # re-check in case entry just opened
+                await self._check_entry_vwap(coin, coin_metrics, direction, min_edge)
 
     async def _check_entry_vwap(self, coin: str, metrics: dict, edge_direction: str, min_edge: float):
         """Entry check using VWAP metrics (matching Replit arb.js logic)."""
@@ -1219,11 +1226,10 @@ class BotEngine:
             return
 
         # Trade opened successfully
-        self._has_position = True
         self.metrics.open += 1
         self.metrics.record_slippage(result_a.slippage_bps, result_b.slippage_bps)
 
-        self._open_trade = {
+        trade_record = {
             "coin": coin,
             "entry_time": datetime.now(timezone.utc).isoformat(),
             "entry_price_a": result_a.price,
@@ -1237,15 +1243,16 @@ class BotEngine:
             "slippage_b": result_b.slippage_bps,
             "direction": edge_direction,
         }
+        self._open_trades[coin] = trade_record
 
-        logger.info(f"[Bot {self.bot_id}] TRADE OPENED {coin} a={result_a.price} b={result_b.price} size={result_a.size}")
+        logger.info(f"[Bot {self.bot_id}] TRADE OPENED {coin} a={result_a.price} b={result_b.price} size={result_a.size} (open={len(self._open_trades)})")
 
         if self.on_trade_callback:
-            self.on_trade_callback("open", self.bot_id, self._open_trade)
+            self.on_trade_callback("open", self.bot_id, trade_record)
 
     async def _check_exit_vwap(self, coin: str, metrics: dict):
         """Exit check using VWAP metrics."""
-        trade = self._open_trade
+        trade = self._open_trades.get(coin)
         if not trade:
             return
 
@@ -1312,10 +1319,10 @@ class BotEngine:
             result_b.slippage_bps if result_b else 0,
         )
 
-        logger.info(f"[Bot {self.bot_id}] TRADE CLOSED {coin} pnl={net_pnl:.6f} reason={close_reason}")
+        logger.info(f"[Bot {self.bot_id}] TRADE CLOSED {coin} pnl={net_pnl:.6f} reason={close_reason} (open={len(self._open_trades) - 1})")
 
         if self.on_trade_callback:
-            trade_record = {
+            close_record = {
                 **trade,
                 "exit_time": datetime.now(timezone.utc).isoformat(),
                 "exit_price_a": mid_a,
@@ -1324,10 +1331,9 @@ class BotEngine:
                 "fees": fee_usd,
                 "close_reason": close_reason,
             }
-            self.on_trade_callback("close", self.bot_id, trade_record)
+            self.on_trade_callback("close", self.bot_id, close_record)
 
-        self._has_position = False
-        self._open_trade = None
+        self._open_trades.pop(coin, None)
 
     # ── Legacy check_exit for backwards compat ──
 
@@ -1409,22 +1415,20 @@ class BotEngine:
         logger.info(f"[Bot {self.bot_id}] LIQUIDATING...")
         self.state = BotState.LIQUIDATING
 
-        if self._has_position and self._open_trade and self._exchange:
-            try:
-                trade = self._open_trade
-                coin = trade["coin"]
-                exit_side_a = "sell" if trade["side_a"] == "buy" else "buy"
-                exit_side_b = "sell" if trade["side_b"] == "buy" else "buy"
+        if self._open_trades and self._exchange:
+            for coin, trade in list(self._open_trades.items()):
+                try:
+                    exit_side_a = "sell" if trade["side_a"] == "buy" else "buy"
+                    exit_side_b = "sell" if trade["side_b"] == "buy" else "buy"
 
-                mid_a, mid_b = self._get_mids_for_coin(coin)
-                mid_a = mid_a or trade["entry_price_a"]
-                mid_b = mid_b or trade["entry_price_b"]
+                    mid_a, mid_b = self._get_mids_for_coin(coin)
+                    mid_a = mid_a or trade["entry_price_a"]
+                    mid_b = mid_b or trade["entry_price_b"]
 
-                await self._execute_pair_order(coin, exit_side_a, exit_side_b, trade["size"], mid_a, mid_b)
-                self._has_position = False
-                self._open_trade = None
-            except Exception as e:
-                logger.error(f"[Bot {self.bot_id}] Liquidation error: {e}")
+                    await self._execute_pair_order(coin, exit_side_a, exit_side_b, trade["size"], mid_a, mid_b)
+                except Exception as e:
+                    logger.error(f"[Bot {self.bot_id}] Liquidation error on {coin}: {e}")
+            self._open_trades.clear()
 
         await self.stop()
 
@@ -1432,7 +1436,6 @@ class BotEngine:
         await self.stop()
         self.metrics = BotMetrics()
         self._samples.clear()
-        self._has_position = False
-        self._open_trade = None
+        self._open_trades.clear()
         self.state = BotState.STOPPED
         logger.info(f"[Bot {self.bot_id}] RESET complete")
