@@ -388,6 +388,15 @@ def round_size(size: float, sz_decimals: int) -> float:
     return math.floor(size * factor) / factor
 
 
+def round_price_sig(price: float, sig_figs: int = 5) -> float:
+    """Round price to N significant figures (Hyperliquid requires <= 5)."""
+    if price == 0:
+        return 0.0
+    magnitude = math.floor(math.log10(abs(price))) + 1
+    decimals = max(0, sig_figs - magnitude)
+    return round(price, decimals)
+
+
 class BotEngine:
     """
     Full trading engine for one arbitrage bot.
@@ -869,7 +878,7 @@ class BotEngine:
                     "coin": sym_a,
                     "is_buy": side_a == "buy",
                     "sz": rounded_size_a,
-                    "limit_px": round(price_a, 6),
+                    "limit_px": round_price_sig(price_a),
                     "order_type": {"limit": {"tif": "Ioc"}},
                     "reduce_only": False,
                 }
@@ -877,7 +886,7 @@ class BotEngine:
                     "coin": sym_b,
                     "is_buy": side_b == "buy",
                     "sz": rounded_size_b,
-                    "limit_px": round(price_b, 6),
+                    "limit_px": round_price_sig(price_b),
                     "order_type": {"limit": {"tif": "Ioc"}},
                     "reduce_only": False,
                 }
@@ -990,7 +999,7 @@ class BotEngine:
                 unwind_size = round_size(filled_result.size, sz_dec)
 
                 result = self._exchange.order(
-                    filled_sym, close_side == "buy", unwind_size, round(unwind_price, 6),
+                    filled_sym, close_side == "buy", unwind_size, round_price_sig(unwind_price),
                     {"limit": {"tif": "Ioc"}}, reduce_only=True,
                 )
                 statuses = result.get("response", {}).get("data", {}).get("statuses", [])
