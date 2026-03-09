@@ -49,17 +49,66 @@ class BotManager:
     def _db(self) -> sqlite3.Connection:
         return sqlite3.connect(str(self._db_path))
 
+    def _load_credentials(self, bot_id: int) -> tuple[str, str, str]:
+        """Load credentials from SQLite (set via dashboard UI)."""
+        try:
+            conn = self._db()
+            row = conn.execute(
+                "SELECT account_address, api_key, sub_account FROM bot_credentials WHERE bot_id = ?",
+                (bot_id,),
+            ).fetchone()
+            conn.close()
+            if row:
+                return row[0] or "", row[1] or "", row[2] or ""
+        except Exception:
+            pass
+        return "", "", ""
+
+    def save_credentials(self, bot_id: int, account_address: str, api_key: str, sub_account: str):
+        """Persist credentials to SQLite so they survive restarts."""
+        try:
+            conn = self._db()
+            conn.execute(
+                """INSERT INTO bot_credentials (bot_id, account_address, api_key, sub_account, updated_at)
+                   VALUES (?, ?, ?, ?, datetime('now'))
+                   ON CONFLICT(bot_id) DO UPDATE SET
+                     account_address = excluded.account_address,
+                     api_key = excluded.api_key,
+                     sub_account = excluded.sub_account,
+                     updated_at = excluded.updated_at""",
+                (bot_id, account_address, api_key, sub_account),
+            )
+            conn.commit()
+            conn.close()
+            logger.info(f"Credentials saved for bot {bot_id}")
+        except Exception as e:
+            logger.warning(f"Failed to save credentials for bot {bot_id}: {e}")
+
     def load_bot_definitions(self, definitions: list[dict]):
-        """Load bot definitions and create engine instances for those with credentials."""
+        """Load bot definitions and create engine instances.
+
+        Credentials priority: env vars > SQLite (dashboard-saved) > empty.
+        """
         self._definitions = definitions
 
         for defn in definitions:
             bot_id = defn["id"]
             prefix = defn["env_prefix"]
 
+            # Priority 1: environment variables
             account = os.environ.get(f"{prefix}_ACCOUNT_ADDRESS", "")
             api_key = os.environ.get(f"{prefix}_API_KEY", "")
             sub_account = os.environ.get(f"{prefix}_SUB_ACCOUNT", "")
+
+            # Priority 2: SQLite (credentials saved via dashboard UI)
+            if not account or not api_key:
+                db_account, db_key, db_sub = self._load_credentials(bot_id)
+                if not account and db_account:
+                    account = db_account
+                if not api_key and db_key:
+                    api_key = db_key
+                if not sub_account and db_sub:
+                    sub_account = db_sub
 
             # Load persisted config if any
             config = self._load_config(bot_id)

@@ -58,6 +58,7 @@ function validateBots(d) {
 export default function BotsPanel() {
   const [data, setData] = useState({ bots: DEFAULT_BOTS, global_stats: DEFAULT_GLOBAL_STATS });
   const [tab, setTab] = useState('short');
+  const [backendOffline, setBackendOffline] = useState(false);
   const [editingWallet, setEditingWallet] = useState(null);
   const [walletInput, setWalletInput] = useState('');
   const [logs, setLogs] = useState([]);
@@ -95,7 +96,11 @@ export default function BotsPanel() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ bot_id: botId, action }),
-    }).then(() => fetchData()).catch(console.error);
+    }).then(r => r.json()).then(d => {
+      if (d._fallback) setBackendOffline(true);
+      else setBackendOffline(false);
+      fetchData();
+    }).catch(console.error);
   }, [fetchData]);
 
   const handleConfigUpdate = useCallback((botId, config) => {
@@ -160,6 +165,13 @@ export default function BotsPanel() {
 
   return (
     <div>
+      {/* ─── Backend offline warning ──── */}
+      {backendOffline && (
+        <div className="mb-4 px-3 py-2 bg-red-900/30 border border-red-500/50 rounded-lg text-red-300 text-xs">
+          Backend offline — bot actions only update local state, no real execution.
+        </div>
+      )}
+
       {/* ─── Sub-header: Title + Short/Long toggle ──── */}
       <div className="mb-4 flex items-center justify-between">
         <div>

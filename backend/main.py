@@ -108,6 +108,15 @@ def init_db():
             updated_at TEXT DEFAULT (datetime('now'))
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS bot_credentials (
+            bot_id INTEGER PRIMARY KEY,
+            account_address TEXT NOT NULL DEFAULT '',
+            api_key TEXT NOT NULL DEFAULT '',
+            sub_account TEXT NOT NULL DEFAULT '',
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -179,6 +188,9 @@ async def update_credentials(bot_id: int, body: dict):
         bot.account_address = body["account_address"]
     if "sub_account" in body:
         bot.sub_account = body["sub_account"] or None
+
+    # Persist to SQLite so credentials survive restarts
+    manager.save_credentials(bot_id, bot.account_address, bot.api_key, bot.sub_account or "")
 
     return {"ok": True, "bot_id": bot_id}
 
