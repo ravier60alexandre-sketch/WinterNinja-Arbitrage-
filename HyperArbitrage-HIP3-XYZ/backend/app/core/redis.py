@@ -101,3 +101,11 @@ class RedisManager:
 
 
 redis_manager = RedisManager()
+
+
+async def redis_get(key: str) -> str | None:
+    return await redis_manager.get(key)
+
+
+async def redis_set(key: str, value: Any, ttl: int | None = 60) -> bool:
+    return await redis_manager.set(key, value, ttl=ttl)
