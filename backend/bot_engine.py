@@ -485,8 +485,12 @@ class BotEngine:
 
     # ── Hyperliquid Connection ──
 
-    def _connect_exchange(self):
-        """Create Hyperliquid Exchange + Info clients using the agent wallet pattern."""
+    async def _connect_exchange(self):
+        """Create Hyperliquid Exchange + Info clients using the agent wallet pattern.
+
+        The SDK's Info.__init__ makes synchronous HTTP calls to load metadata,
+        so we run it in a thread to avoid blocking the async event loop.
+        """
         if not self.account_address or not self.api_key:
             logger.error(f"[Bot {self.bot_id}] No credentials configured — cannot connect")
             return False
@@ -508,15 +512,27 @@ class BotEngine:
             # Trading address = sub_account if set, otherwise account_address
             trading_address = self.sub_account or self.account_address
 
-            self._info = Info(base_url=base_url, skip_ws=True)
+            # Run SDK init in thread — it makes sync HTTP calls to load meta
+            # Pass perp_dexs to let the SDK natively load deployer perp indices
+            deployer_names = [self._prefix_a, self._prefix_b]
+            # Also include "" for the main exchange perps
+            perp_dexs_list = [""] + [d for d in deployer_names if d]
 
-            self._exchange = Exchange(
-                wallet=agent_wallet,
-                base_url=base_url,
-                account_address=trading_address,
-            )
+            def _init_sdk():
+                info = Info(base_url=base_url, skip_ws=True, perp_dexs=perp_dexs_list)
+                exchange = Exchange(
+                    wallet=agent_wallet,
+                    base_url=base_url,
+                    account_address=trading_address,
+                )
+                return info, exchange
 
-            logger.info(f"[Bot {self.bot_id}] Connected to Hyperliquid mainnet, trading as {trading_address[:10]}...")
+            logger.info(f"[Bot {self.bot_id}] Initializing SDK with perp_dexs={perp_dexs_list}...")
+            self._info, self._exchange = await asyncio.get_event_loop().run_in_executor(None, _init_sdk)
+
+            # Log what the SDK loaded
+            n_coins = len(self._info.coin_to_asset) if hasattr(self._info, 'coin_to_asset') else 0
+            logger.info(f"[Bot {self.bot_id}] SDK loaded {n_coins} assets, trading as {trading_address[:10]}...")
             return True
 
         except ImportError as e:
@@ -1256,12 +1272,19 @@ class BotEngine:
         self.state = BotState.CONNECTING
         logger.info(f"[Bot {self.bot_id}] Starting {self.name} with {len(self._enabled_pairs)} pairs...")
 
-        if not self._connect_exchange():
+        # Connect with timeout — SDK init makes HTTP calls that can be slow
+        try:
+            connected = await asyncio.wait_for(self._connect_exchange(), timeout=30.0)
+        except asyncio.TimeoutError:
+            self.state = BotState.STOPPED
+            raise RuntimeError(f"Bot {self.bot_id}: Connection timed out (30s)")
+        except Exception as e:
+            self.state = BotState.STOPPED
+            raise RuntimeError(f"Bot {self.bot_id}: Failed to connect: {e}")
+
+        if not connected:
             self.state = BotState.STOPPED
             raise RuntimeError(f"Bot {self.bot_id}: Failed to connect to Hyperliquid")
-
-        # Load deployer perps and patch SDK BEFORE starting trading
-        await self._patch_sdk_with_deployer_perps()
 
         self.state = BotState.RUNNING
         self._stop_event.clear()
