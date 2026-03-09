@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import Link from 'next/link';
 import OverviewTable from '../../components/OverviewTable';
 import BotsPanel from '../../components/BotsPanel';
+import DetailPanel from '../../components/DetailPanel';
 
 const WINDOWS = ['1h', '6h', '12h', '24h', '7d'];
+const TABS = ['detail', 'overview', 'bots'];
 
 export default function OverviewPage() {
   return (
@@ -18,7 +19,8 @@ export default function OverviewPage() {
 
 function OverviewPageInner() {
   const searchParams = useSearchParams();
-  const initialTab = searchParams.get('tab') === 'bots' ? 'bots' : 'overview';
+  const paramTab = searchParams.get('tab');
+  const initialTab = TABS.includes(paramTab) ? paramTab : 'detail';
 
   const [activeTab, setActiveTab] = useState(initialTab);
   const [window, setWindow] = useState('24h');
@@ -29,6 +31,14 @@ function OverviewPageInner() {
   const [lastRefresh, setLastRefresh] = useState(null);
   const [lastLiveUpdate, setLastLiveUpdate] = useState(null);
   const liveCountRef = useRef(0);
+
+  // Update URL without reload when tab changes
+  const switchTab = useCallback((tab) => {
+    setActiveTab(tab);
+    const url = new URL(globalThis.location);
+    url.searchParams.set('tab', tab);
+    globalThis.history.replaceState(null, '', url);
+  }, []);
 
   // 1) SSE for live spreads — instant updates every 500ms
   useEffect(() => {
@@ -92,19 +102,26 @@ function OverviewPageInner() {
     return () => clearInterval(interval);
   }, [fetchStats]);
 
-  // Keyboard shortcuts: 1-5 for windows
+  // Keyboard shortcuts: 1-5 for windows (only when overview tab active)
   useEffect(() => {
     const handleKey = (e) => {
       if (e.target.tagName === 'INPUT') return;
-      if (e.key >= '1' && e.key <= '5') {
+      if (activeTab === 'overview' && e.key >= '1' && e.key <= '5') {
         setWindow(WINDOWS[parseInt(e.key) - 1]);
       }
     };
     addEventListener('keydown', handleKey);
     return () => removeEventListener('keydown', handleKey);
-  }, []);
+  }, [activeTab]);
 
   const feeThreshold = data ? data.fee_total_bps : 4.0;
+
+  const tabClass = (tab) =>
+    `px-3 py-1 text-xs rounded-md transition-colors ${
+      activeTab === tab
+        ? 'bg-accent-blue/20 text-accent-blue border border-accent-blue/30'
+        : 'text-gray-500 hover:text-gray-300 border border-bg-border'
+    }`;
 
   return (
     <div className="min-h-screen bg-bg-primary">
@@ -112,34 +129,17 @@ function OverviewPageInner() {
       <header className="border-b border-bg-border bg-bg-card/50 backdrop-blur-sm sticky top-0 z-40">
         <div className="max-w-[1800px] mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Link href="/" className="text-lg font-bold text-white tracking-tight hover:text-accent-blue transition-colors">
+            <span className="text-lg font-bold text-white tracking-tight">
               HiP-3 <span className="text-accent-green">Spread Analyzer</span>
-            </Link>
+            </span>
             <div className="flex items-center gap-2">
-              <Link
-                href="/"
-                className="px-3 py-1 text-xs text-gray-500 hover:text-gray-300 border border-bg-border rounded-md transition-colors"
-              >
+              <button onClick={() => switchTab('detail')} className={tabClass('detail')}>
                 Detail View
-              </Link>
-              <button
-                onClick={() => setActiveTab('overview')}
-                className={`px-3 py-1 text-xs rounded-md transition-colors ${
-                  activeTab === 'overview'
-                    ? 'bg-accent-blue/20 text-accent-blue border border-accent-blue/30'
-                    : 'text-gray-500 hover:text-gray-300 border border-bg-border'
-                }`}
-              >
+              </button>
+              <button onClick={() => switchTab('overview')} className={tabClass('overview')}>
                 Overview
               </button>
-              <button
-                onClick={() => setActiveTab('bots')}
-                className={`px-3 py-1 text-xs rounded-md transition-colors ${
-                  activeTab === 'bots'
-                    ? 'bg-accent-blue/20 text-accent-blue border border-accent-blue/30'
-                    : 'text-gray-500 hover:text-gray-300 border border-bg-border'
-                }`}
-              >
+              <button onClick={() => switchTab('bots')} className={tabClass('bots')}>
                 Bots
               </button>
             </div>
@@ -198,25 +198,32 @@ function OverviewPageInner() {
         </div>
       </header>
 
-      {/* Content */}
+      {/* Content — all panels stay mounted, hidden via CSS */}
       <main className="max-w-[1800px] mx-auto px-4 py-6">
-        {activeTab === 'overview' ? (
-          <>
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-semibold text-gray-300">
-                  All Pairs — Rolling Stats <span className="text-accent-blue font-mono">{window}</span>
-                </h2>
-                <p className="text-[10px] text-gray-600 mt-1">
-                  Fees: {feeThreshold.toFixed(1)} bps round-trip · Live spreads via SSE (real-time) · Stats refresh every 30s
-                </p>
-              </div>
+        {/* Detail View tab */}
+        <div className={activeTab === 'detail' ? '' : 'hidden'}>
+          <DetailPanel />
+        </div>
+
+        {/* Overview tab */}
+        <div className={activeTab === 'overview' ? '' : 'hidden'}>
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-300">
+                All Pairs — Rolling Stats <span className="text-accent-blue font-mono">{window}</span>
+              </h2>
+              <p className="text-[10px] text-gray-600 mt-1">
+                Fees: {feeThreshold.toFixed(1)} bps round-trip · Live spreads via SSE (real-time) · Stats refresh every 30s
+              </p>
             </div>
-            <OverviewTable data={data} liveSpreads={liveSpreads} feeThreshold={feeThreshold} />
-          </>
-        ) : (
+          </div>
+          <OverviewTable data={data} liveSpreads={liveSpreads} feeThreshold={feeThreshold} />
+        </div>
+
+        {/* Bots tab */}
+        <div className={activeTab === 'bots' ? '' : 'hidden'}>
           <BotsPanel />
-        )}
+        </div>
       </main>
 
       {/* Footer */}
@@ -224,7 +231,8 @@ function OverviewPageInner() {
         <div className="max-w-[1800px] mx-auto px-4 flex items-center justify-between text-xs text-gray-600">
           <span>HiP-3 Spread Analyzer — Hyperliquid</span>
           <span className="font-mono">
-            {activeTab === 'overview' ? 'Keys: 1-5 windows' : '6-Bot Deployer Router'}
+            {activeTab === 'detail' ? 'Keys: ←/→ pairs · 1-5 windows' :
+             activeTab === 'overview' ? 'Keys: 1-5 windows' : '6-Bot Deployer Router'}
           </span>
         </div>
       </footer>

@@ -197,11 +197,22 @@ export async function PUT(request) {
 
   // Try to update config on FastAPI backend
   if (body.config) {
-    const backendResult = await fetchFromBackend(
+    await fetchFromBackend(
       `/api/v1/bots/${bot_id}/config`,
       { method: 'PATCH', body: JSON.stringify(body.config) }
     );
-    // Continue to also save locally for pairs/wallet which backend doesn't manage
+  }
+
+  // Forward API key to backend (never store full key locally)
+  if (body.api_key) {
+    await fetchFromBackend(
+      `/api/v1/bots/${bot_id}/credentials`,
+      { method: 'PATCH', body: JSON.stringify({
+        api_key: body.api_key,
+        account_address: body.wallet,
+        sub_account: body.sub_account,
+      }) }
+    );
   }
 
   // Always update local state for wallet, pairs, tiers
@@ -214,6 +225,10 @@ export async function PUT(request) {
   if (body.config) bot.config = { ...bot.config, ...body.config };
   if (body.pairs) bot.pairs = body.pairs;
   if (body.tiers_enabled !== undefined) bot.tiers_enabled = body.tiers_enabled;
+  // Store only masked version of API key (last 4 chars) for display
+  if (body.api_key) {
+    bot.api_key_masked = '...' + body.api_key.slice(-4);
+  }
 
   saveBots(data);
   return Response.json({ bot });

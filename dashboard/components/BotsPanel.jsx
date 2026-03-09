@@ -118,6 +118,14 @@ export default function BotsPanel() {
     }).catch(console.error);
   }, [fetchData]);
 
+  const handleApiKeySet = useCallback((botId, apiKey) => {
+    fetch('/api/bots', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bot_id: botId, api_key: apiKey }),
+    }).then(() => fetchData()).catch(console.error);
+  }, [fetchData]);
+
   const handlePairToggle = useCallback((botId, pairIdx, enabled) => {
     const bot = data.bots.find(b => b.id === botId);
     if (!bot) return;
@@ -210,6 +218,7 @@ export default function BotsPanel() {
             onAction={handleAction}
             onConfigUpdate={handleConfigUpdate}
             onWalletSet={handleWalletSet}
+            onApiKeySet={handleApiKeySet}
             onPairToggle={handlePairToggle}
             onTiersToggle={handleTiersToggle}
             editingWallet={editingWallet}
@@ -286,7 +295,7 @@ function CounterChip({ label, value, color }) {
 }
 
 // ─── Bot Column (full section) ──────────────────────────────
-function BotColumn({ bot, onAction, onConfigUpdate, onWalletSet, onPairToggle, onTiersToggle, editingWallet, setEditingWallet, walletInput, setWalletInput }) {
+function BotColumn({ bot, onAction, onConfigUpdate, onWalletSet, onApiKeySet, onPairToggle, onTiersToggle, editingWallet, setEditingWallet, walletInput, setWalletInput }) {
   const ec = EXCHANGE_COLORS[bot.exchange] || EXCHANGE_COLORS.FLX;
   const [localConfig, setLocalConfig] = useState(bot.config);
   const [dirty, setDirty] = useState(false);
@@ -357,6 +366,13 @@ function BotColumn({ bot, onAction, onConfigUpdate, onWalletSet, onPairToggle, o
         <div className="text-[10px] text-gray-500 mb-3">
           Fees <span className="font-mono text-accent-green">{bot.fees_bps || 0.45}bps</span>
         </div>
+
+        {/* API Key (Private Key) */}
+        <ApiKeyField
+          botId={bot.id}
+          maskedKey={bot.api_key_masked}
+          onSave={onApiKeySet}
+        />
 
         {/* Wallet */}
         <WalletField
@@ -574,6 +590,73 @@ function BotColumn({ bot, onAction, onConfigUpdate, onWalletSet, onPairToggle, o
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── API Key (Private Key) Field ─────────────────────────────
+function ApiKeyField({ botId, maskedKey, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState('');
+  const [showKey, setShowKey] = useState(false);
+
+  const handleSave = () => {
+    if (value.trim()) {
+      onSave(botId, value.trim());
+      setEditing(false);
+      setValue('');
+      setShowKey(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2 mb-1.5 text-[10px]">
+      <span className="text-gray-600 w-14">API Key:</span>
+      {editing ? (
+        <div className="flex-1 flex gap-1">
+          <div className="flex-1 relative">
+            <input
+              type={showKey ? 'text' : 'password'}
+              value={value}
+              onChange={e => setValue(e.target.value)}
+              placeholder="Private key (hex)..."
+              className="w-full px-2 py-1 pr-12 text-[10px] bg-bg-primary border border-bg-border rounded font-mono text-gray-200 focus:outline-none focus:border-accent-blue"
+              autoFocus
+            />
+            <button
+              type="button"
+              onClick={() => setShowKey(!showKey)}
+              className="absolute right-1 top-0.5 px-1.5 py-0.5 text-[8px] text-gray-500 hover:text-gray-300 transition-colors"
+            >
+              {showKey ? 'Hide' : 'Show'}
+            </button>
+          </div>
+          <button
+            onClick={handleSave}
+            className="px-2 py-1 bg-accent-green text-white rounded text-[9px] font-semibold"
+          >
+            Save
+          </button>
+          <button
+            onClick={() => { setEditing(false); setValue(''); setShowKey(false); }}
+            className="px-2 py-1 bg-gray-600 text-gray-200 rounded text-[9px] font-semibold"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <>
+          <span className="flex-1 font-mono text-gray-400 bg-bg-primary px-2 py-1 rounded border border-bg-border">
+            {maskedKey ? `••••••${maskedKey}` : <span className="text-gray-600 italic">not set</span>}
+          </span>
+          <button
+            onClick={() => setEditing(true)}
+            className="px-2 py-0.5 bg-accent-blue text-white rounded text-[9px] font-semibold hover:brightness-110 transition-all"
+          >
+            Set
+          </button>
+        </>
+      )}
     </div>
   );
 }
