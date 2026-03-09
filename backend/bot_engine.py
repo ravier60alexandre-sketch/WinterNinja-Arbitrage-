@@ -537,8 +537,10 @@ class BotEngine:
                 key = key[2:]
             agent_wallet = eth_account.Account.from_key(key)
 
-            # Trading address = sub_account if set, otherwise account_address
+            # Trading address for reads = sub_account if set, otherwise account_address
             trading_address = self.sub_account or self.account_address
+            # vault_address routes ORDERS to the sub-account (account_address only affects reads)
+            vault = self.sub_account if self.sub_account else None
 
             # Run SDK init in thread — it makes sync HTTP calls to load meta
             # Pass perp_dexs to let the SDK natively load deployer perp indices
@@ -552,6 +554,7 @@ class BotEngine:
                     wallet=agent_wallet,
                     base_url=base_url,
                     account_address=trading_address,
+                    vault_address=vault,
                     perp_dexs=perp_dexs_list,
                 )
                 return info, exchange
@@ -562,7 +565,8 @@ class BotEngine:
             # Log what the SDK loaded
             n_info = len(self._info.coin_to_asset) if hasattr(self._info, 'coin_to_asset') else 0
             n_exchange = len(self._exchange.info.coin_to_asset) if hasattr(self._exchange, 'info') and hasattr(self._exchange.info, 'coin_to_asset') else 0
-            logger.info(f"[Bot {self.bot_id}] SDK loaded: Info={n_info} assets, Exchange.info={n_exchange} assets, trading as {trading_address[:10]}...")
+            vault_label = f"sub-account {vault[:10]}..." if vault else "main wallet"
+            logger.info(f"[Bot {self.bot_id}] SDK loaded: Info={n_info} assets, Exchange.info={n_exchange} assets, trading as {trading_address[:10]}..., vault={vault_label}")
             return True
 
         except ImportError as e:
