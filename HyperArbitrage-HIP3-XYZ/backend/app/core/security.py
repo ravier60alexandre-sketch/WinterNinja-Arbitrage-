@@ -13,13 +13,15 @@ def _get_fernet(master_key: str) -> Fernet:
     return Fernet(master_key.encode())
 
 
-def encrypt_api_key(key: str, master_key: str) -> str:
-    fernet = _get_fernet(master_key)
+def encrypt_api_key(key: str, master_key: str | None = None) -> str:
+    mk = master_key or settings.MASTER_ENCRYPTION_KEY
+    fernet = _get_fernet(mk)
     return fernet.encrypt(key.encode()).decode()
 
 
-def decrypt_api_key(encrypted: str, master_key: str) -> str:
-    fernet = _get_fernet(master_key)
+def decrypt_api_key(encrypted: str, master_key: str | None = None) -> str:
+    mk = master_key or settings.MASTER_ENCRYPTION_KEY
+    fernet = _get_fernet(mk)
     return fernet.decrypt(encrypted.encode()).decode()
 
 
