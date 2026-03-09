@@ -1328,6 +1328,12 @@ class BotEngine:
             self.state = BotState.STOPPED
             raise RuntimeError(f"Bot {self.bot_id}: Failed to connect to Hyperliquid")
 
+        # Load deployer registry for szDecimals + patch SDK for order routing
+        try:
+            await self._patch_sdk_with_deployer_perps()
+        except Exception as e:
+            logger.warning(f"[Bot {self.bot_id}] Registry load failed (using fallback): {e}")
+
         self.state = BotState.RUNNING
         self._stop_event.clear()
 
