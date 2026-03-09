@@ -464,6 +464,10 @@ class BotEngine:
         self._best_edge_coin: str = ""
         self._books_received: int = 0
 
+        # Order cooldown: avoid spamming after failed attempts
+        self._last_order_attempt: float = 0.0
+        self._order_cooldown_s: float = 5.0  # Wait 5s between order attempts
+
     def set_enabled_pairs(self, pairs: list[str]):
         """Set the list of enabled coin symbols (e.g., ['SILVER', 'TSLA', 'GOLD'])."""
         self._enabled_pairs = pairs
@@ -483,11 +487,19 @@ class BotEngine:
         return NO_GROWTH_TAKER_FEE * 10000  # 1.5 bps
 
     def _get_sz_decimals(self, coin: str) -> int:
-        """Get szDecimals for a coin from the deployer registry."""
+        """Get szDecimals for a coin from the deployer registry or SDK."""
         if self._registry:
             sd = self._registry.get_sz_decimals(coin)
             if sd is not None:
                 return sd
+        # Fallback: check the Exchange's Info.asset_to_sz_decimals
+        info = getattr(self._exchange, 'info', self._info)
+        if info and hasattr(info, 'coin_to_asset') and hasattr(info, 'asset_to_sz_decimals'):
+            asset_idx = info.coin_to_asset.get(coin)
+            if asset_idx is not None:
+                sd = info.asset_to_sz_decimals.get(asset_idx)
+                if sd is not None:
+                    return sd
         return 0  # fallback: whole numbers
 
     # ── Hyperliquid Connection ──
@@ -531,6 +543,7 @@ class BotEngine:
                     wallet=agent_wallet,
                     base_url=base_url,
                     account_address=trading_address,
+                    perp_dexs=perp_dexs_list,
                 )
                 return info, exchange
 
@@ -538,8 +551,9 @@ class BotEngine:
             self._info, self._exchange = await asyncio.get_event_loop().run_in_executor(None, _init_sdk)
 
             # Log what the SDK loaded
-            n_coins = len(self._info.coin_to_asset) if hasattr(self._info, 'coin_to_asset') else 0
-            logger.info(f"[Bot {self.bot_id}] SDK loaded {n_coins} assets, trading as {trading_address[:10]}...")
+            n_info = len(self._info.coin_to_asset) if hasattr(self._info, 'coin_to_asset') else 0
+            n_exchange = len(self._exchange.info.coin_to_asset) if hasattr(self._exchange, 'info') and hasattr(self._exchange.info, 'coin_to_asset') else 0
+            logger.info(f"[Bot {self.bot_id}] SDK loaded: Info={n_info} assets, Exchange.info={n_exchange} assets, trading as {trading_address[:10]}...")
             return True
 
         except ImportError as e:
@@ -887,6 +901,11 @@ class BotEngine:
                 await asyncio.sleep(delay)
             except Exception as e:
                 logger.error(f"[Bot {self.bot_id}] Order execution error: {e}")
+                # Debug: check if coin is in Exchange's info
+                if hasattr(self._exchange, 'info') and hasattr(self._exchange.info, 'coin_to_asset'):
+                    has_a = sym_a in self._exchange.info.coin_to_asset
+                    has_b = sym_b in self._exchange.info.coin_to_asset
+                    logger.error(f"[Bot {self.bot_id}] Exchange.info has {sym_a}={has_a}, {sym_b}={has_b}")
                 self.metrics.errors += 1
                 return None, None
 
@@ -1098,6 +1117,11 @@ class BotEngine:
 
     async def _check_entry_vwap(self, coin: str, metrics: dict, edge_direction: str, min_edge: float):
         """Entry check using VWAP metrics (matching Replit arb.js logic)."""
+        # Cooldown after failed order attempts to prevent spam
+        now = time.time()
+        if now - self._last_order_attempt < self._order_cooldown_s:
+            return
+
         if edge_direction == "long":
             net_edge = metrics.get("net_edge_long_bps", 0)
             capacity = metrics.get("capacity_long", 0)
@@ -1160,6 +1184,7 @@ class BotEngine:
             f"net_edge={net_edge:.2f}bps capacity=${capacity:.0f} size={size:.4f}"
         )
 
+        self._last_order_attempt = time.time()
         result_a, result_b = await self._execute_pair_order(coin, side_a, side_b, size, mid_a, mid_b)
 
         if result_a is None or result_b is None:
