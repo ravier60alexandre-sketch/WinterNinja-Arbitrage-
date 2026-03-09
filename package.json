@@ -6,8 +6,8 @@
   "scripts": {
     "start": "node start.js",
     "collector": "node collector/index.js",
-    "dashboard": "next dev dashboard",
-    "build": "next build dashboard"
+    "dashboard": "cd dashboard && next dev",
+    "build": "cd dashboard && next build"
   },
   "dependencies": {
     "better-sqlite3": "^9.4.3",

@@ -137,13 +137,13 @@ function saveBots(data) {
 // GET — list all bots (try FastAPI, fallback to local)
 // ═══════════════════════════════════════════════════
 export async function GET() {
-  // Try FastAPI backend first
+  // Try FastAPI backend first — validate it returns the expected 6-bot format
   const backendData = await fetchFromBackend('/api/v1/bots');
-  if (backendData) {
+  if (backendData?.bots?.length > 0 && backendData.bots[0].exchange) {
     return Response.json(backendData);
   }
 
-  // Fallback to local bots.json
+  // Fallback to local bots.json (correct 6-bot format with exchange/direction/etc.)
   const data = loadBots();
   return Response.json(data);
 }
