@@ -21,7 +21,7 @@ export default function BotCard({ bot, onStart, onStop, onPause }) {
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <Link href={`/bots/${bot.id}`} className="text-sm font-semibold text-white group-hover:text-accent-blue transition-colors truncate">
-          {bot.name}
+          #{bot.id} {bot.name}
         </Link>
         <span className={`px-2 py-0.5 text-[10px] font-mono uppercase rounded ${colors.bg} ${colors.text} border ${colors.border}`}>
           <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 ${colors.dot} ${bot.state === 'running' ? 'animate-pulse' : ''}`} />

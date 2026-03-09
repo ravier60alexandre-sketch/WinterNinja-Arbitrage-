@@ -306,7 +306,7 @@ function BotColumn({ bot, onAction, onConfigUpdate, onWalletSet, onPairToggle, o
         {/* Title row */}
         <div className="flex items-center gap-2 mb-3">
           <span className={`${ec.tag} text-white text-[10px] font-bold px-2 py-0.5 rounded`}>{bot.exchange}</span>
-          <span className="text-sm font-bold text-[#2d2a26]">{bot.name}</span>
+          <span className="text-sm font-bold text-[#2d2a26]">#{bot.id} {bot.name}</span>
         </div>
 
         {/* Status + Controls */}
@@ -376,7 +376,7 @@ function BotColumn({ bot, onAction, onConfigUpdate, onWalletSet, onPairToggle, o
       <div className="bg-white rounded-xl border border-[#e8e0d4] p-4">
         <div className="flex items-center gap-2 mb-3">
           <div className={`w-1 h-4 rounded ${ec.tag}`} />
-          <span className="text-xs font-bold text-[#2d2a26] uppercase">Dashboard {bot.name}</span>
+          <span className="text-xs font-bold text-[#2d2a26] uppercase">Dashboard #{bot.id} {bot.name}</span>
         </div>
 
         <div className="grid grid-cols-3 gap-2">
@@ -399,7 +399,7 @@ function BotColumn({ bot, onAction, onConfigUpdate, onWalletSet, onPairToggle, o
       <div className="bg-white rounded-xl border border-[#e8e0d4] p-4">
         <div className="flex items-center gap-2 mb-4">
           <div className={`w-1 h-4 rounded ${ec.tag}`} />
-          <span className="text-xs font-bold text-[#2d2a26] uppercase">Config {bot.name}</span>
+          <span className="text-xs font-bold text-[#2d2a26] uppercase">Config #{bot.id} {bot.name}</span>
         </div>
 
         {/* Position Sizing */}
