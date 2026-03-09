@@ -173,6 +173,60 @@ async def get_logs(limit: int = 100, level: str = ""):
     return {"logs": logs[-limit:]}
 
 
+# ── GET /api/v1/bots/{bot_id}/diag — diagnostic info for a bot ──
+@app.get("/api/v1/bots/{bot_id}/diag")
+async def bot_diagnostics(bot_id: int):
+    bot = manager._bots.get(bot_id)
+    if not bot:
+        return {"error": f"Bot {bot_id} not found"}
+
+    import time
+    now = time.time()
+    books_info = {}
+    for coin in bot._enabled_pairs:
+        sym_a = bot._hip3_symbol(bot._prefix_a, coin)
+        sym_b = bot._hip3_symbol(bot._prefix_b, coin)
+        book_a = bot._books.get(sym_a, {})
+        book_b = bot._books.get(sym_b, {})
+        books_info[coin] = {
+            "a_symbol": sym_a,
+            "b_symbol": sym_b,
+            "a_has_data": bool(book_a.get("bids") or book_a.get("asks")),
+            "b_has_data": bool(book_b.get("bids") or book_b.get("asks")),
+            "a_best_bid": book_a["bids"][0][0] if book_a.get("bids") else None,
+            "a_best_ask": book_a["asks"][0][0] if book_a.get("asks") else None,
+            "b_best_bid": book_b["bids"][0][0] if book_b.get("bids") else None,
+            "b_best_ask": book_b["asks"][0][0] if book_b.get("asks") else None,
+        }
+        # Compute current edge if data exists
+        metrics = bot._compute_vwap_spread(coin)
+        if metrics and not metrics.get("fast_rejected"):
+            books_info[coin]["edge_long_bps"] = round(metrics.get("net_edge_long_bps", 0), 2)
+            books_info[coin]["edge_short_bps"] = round(metrics.get("net_edge_short_bps", 0), 2)
+            books_info[coin]["mid_a"] = round(metrics["mid_a"], 6)
+            books_info[coin]["mid_b"] = round(metrics["mid_b"], 6)
+
+    return {
+        "bot_id": bot_id,
+        "state": bot.state.value,
+        "direction": bot.direction,
+        "prefix_a": bot._prefix_a,
+        "prefix_b": bot._prefix_b,
+        "enabled_pairs": bot._enabled_pairs,
+        "tick_count": bot._tick_count,
+        "ws_messages_received": bot._books_received,
+        "books_populated": len(bot._books),
+        "books_expected": len(bot._enabled_pairs) * 2,
+        "last_ws_data_ago_s": round(now - bot._last_ws_data, 1) if bot._last_ws_data > 0 else None,
+        "best_edge_seen": round(bot._best_edge_seen, 2),
+        "best_edge_coin": bot._best_edge_coin,
+        "min_edge_bps": bot.config.min_edge_bps,
+        "has_position": bot._has_position,
+        "samples_per_coin": {coin: len(bot._samples.get(coin, [])) for coin in bot._enabled_pairs},
+        "books": books_info,
+    }
+
+
 # ── GET /health ──
 @app.get("/health")
 async def health():

@@ -457,6 +457,13 @@ class BotEngine:
         # WS heartbeat tracking
         self._last_ws_data: float = 0.0
 
+        # Diagnostic counters
+        self._tick_count: int = 0
+        self._last_diag_log: float = 0.0
+        self._best_edge_seen: float = -999.0
+        self._best_edge_coin: str = ""
+        self._books_received: int = 0
+
     def set_enabled_pairs(self, pairs: list[str]):
         """Set the list of enabled coin symbols (e.g., ['SILVER', 'TSLA', 'GOLD'])."""
         self._enabled_pairs = pairs
@@ -656,6 +663,7 @@ class BotEngine:
                                 }
                                 self._books[coin] = book
                                 self._last_ws_data = now
+                                self._books_received += 1
                         except Exception as e:
                             logger.debug(f"[Bot {self.bot_id}] WS parse error: {e}")
 
@@ -1002,6 +1010,8 @@ class BotEngine:
         if not self._enabled_pairs:
             return
 
+        self._tick_count += 1
+
         best_net_edge = None
         best_coin = None
         best_metrics = None
@@ -1010,6 +1020,11 @@ class BotEngine:
         min_edge = self.config.min_edge_bps
         notionals = self.config.notional_sizes or NOTIONAL_SIZES
 
+        # Track per-tick diagnostics
+        coins_with_books = 0
+        coins_fast_rejected = 0
+        coins_no_books = 0
+
         for coin in self._enabled_pairs:
             # Skip coins with funding block
             if coin in self._funding_blocked_coins:
@@ -1017,22 +1032,24 @@ class BotEngine:
 
             # Compute VWAP metrics for the smallest notional first (fast rejection)
             metrics = self._compute_vwap_spread(coin, notionals[0])
-            if metrics is None or metrics.get("fast_rejected"):
+            if metrics is None:
+                coins_no_books += 1
                 continue
+            if metrics.get("fast_rejected"):
+                coins_fast_rejected += 1
+                coins_with_books += 1
+                continue
+            coins_with_books += 1
 
             # Record spread sample
             self._add_spread_sample(coin, metrics)
 
-            # Check both directions
-            net_long = metrics.get("net_edge_long_bps", 0)
-            net_short = metrics.get("net_edge_short_bps", 0)
-
-            # Pick the better direction
-            if net_long > net_short:
-                edge = net_long
+            # Only check the direction this bot is configured for
+            if self.direction == "long_a_short_b":
+                edge = metrics.get("net_edge_long_bps", 0)
                 direction = "long"
-            else:
-                edge = net_short
+            else:  # short_a_long_b
+                edge = metrics.get("net_edge_short_bps", 0)
                 direction = "short"
 
             if best_net_edge is None or edge > best_net_edge:
@@ -1040,6 +1057,31 @@ class BotEngine:
                 best_coin = coin
                 best_metrics = metrics
                 best_direction = direction
+
+        # ── Periodic diagnostic log (every 30s) ──
+        now = time.time()
+        if best_net_edge is not None and best_net_edge > self._best_edge_seen:
+            self._best_edge_seen = best_net_edge
+            self._best_edge_coin = best_coin or ""
+
+        if now - self._last_diag_log >= 30:
+            n_books = len(self._books)
+            total_pairs = len(self._enabled_pairs) * 2
+            logger.info(
+                f"[Bot {self.bot_id}] DIAG tick={self._tick_count} "
+                f"books={n_books}/{total_pairs} ws_msgs={self._books_received} "
+                f"with_data={coins_with_books} no_books={coins_no_books} fast_rej={coins_fast_rejected} "
+                f"best_edge={best_net_edge:.2f}bps/{best_coin} "
+                f"best_ever={self._best_edge_seen:.2f}bps/{self._best_edge_coin} "
+                f"min_edge={min_edge}bps has_pos={self._has_position}"
+            ) if best_net_edge is not None else logger.info(
+                f"[Bot {self.bot_id}] DIAG tick={self._tick_count} "
+                f"books={n_books}/{total_pairs} ws_msgs={self._books_received} "
+                f"with_data={coins_with_books} no_books={coins_no_books} fast_rej={coins_fast_rejected} "
+                f"NO EDGE FOUND — best_ever={self._best_edge_seen:.2f}bps/{self._best_edge_coin} "
+                f"min_edge={min_edge}bps has_pos={self._has_position}"
+            )
+            self._last_diag_log = now
 
         if best_net_edge is None:
             return
