@@ -21,8 +21,42 @@ const TIER_COLORS = {
   N: 'bg-amber-500',
 };
 
+// ─── Default 6-bot definitions (client-side fallback) ─────
+const DEFAULT_METRICS = {
+  pnl_net: 0, fees: 0, volume: 0, open: 0, closed: 0,
+  win_pct: null, wins: 0, losses: 0, slip_avg_bps: 0,
+  errors: 0, orphans: 0, funding: 0,
+};
+const DEFAULT_CONFIG = {
+  max_pos: 300, max_global: 1000, max_lev: 10, sl_bps: 0,
+  max_loss_bps: 500, percentile: 0.75, buf: 0, slip: 2,
+  timer: '6h', close_buffer_bps: 2, zmr: false, close_fee_rt_buffer: false,
+};
+const DEFAULT_BOTS = [
+  { id: 1, name: 'Long XYZ / Short CASH', exchange: 'CASH', pair_b: 'cash', direction: 'long' },
+  { id: 2, name: 'Long XYZ / Short KM',   exchange: 'KM',   pair_b: 'km',   direction: 'long' },
+  { id: 3, name: 'Long XYZ / Short FLX',  exchange: 'FLX',  pair_b: 'flx',  direction: 'long' },
+  { id: 4, name: 'Short XYZ / Long CASH', exchange: 'CASH', pair_b: 'cash', direction: 'short' },
+  { id: 5, name: 'Short XYZ / Long KM',   exchange: 'KM',   pair_b: 'km',   direction: 'short' },
+  { id: 6, name: 'Short XYZ / Long FLX',  exchange: 'FLX',  pair_b: 'flx',  direction: 'short' },
+].map(d => ({
+  ...d, label: d.name, state: 'stopped', wallet: '', sub_account: '',
+  collateral: { usdc: 0, usdh: 0, total: 0 }, ping_ms: 0, fees_bps: 0.45,
+  metrics: { ...DEFAULT_METRICS }, config: { ...DEFAULT_CONFIG },
+  pairs: [], tiers_enabled: true,
+}));
+
+const DEFAULT_GLOBAL_STATS = {
+  combined_open: 0, net_pnl: 0, total_fees: 0, total_funding: 0,
+  total_volume: 0, total_trades: 0, routed: 0, rejected: 0,
+};
+
+function validateBots(d) {
+  return d?.bots?.length > 0 && d.bots[0].exchange && d.bots[0].direction;
+}
+
 export default function BotsPanel() {
-  const [data, setData] = useState({ bots: [], global_stats: {} });
+  const [data, setData] = useState({ bots: DEFAULT_BOTS, global_stats: DEFAULT_GLOBAL_STATS });
   const [tab, setTab] = useState('short');
   const [editingWallet, setEditingWallet] = useState(null);
   const [walletInput, setWalletInput] = useState('');
@@ -32,7 +66,13 @@ export default function BotsPanel() {
   const fetchData = useCallback(() => {
     fetch('/api/bots')
       .then(r => r.json())
-      .then(d => setData(d))
+      .then(d => {
+        // Only use backend data if it has expected format (exchange + direction)
+        if (validateBots(d)) {
+          setData(d);
+        }
+        // Otherwise keep default 6-bot layout
+      })
       .catch(() => {});
   }, []);
 
