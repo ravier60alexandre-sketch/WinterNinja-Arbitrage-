@@ -96,7 +96,7 @@ async function main() {
     console.log('[WARN] backend/main.py not found — bot engine disabled');
   }
 
-  // ── Start Next.js dashboard ──
+  // ── Start old Next.js dashboard (Spread Analyzer standalone) ──
   const dashboardDir = path.resolve(__dirname, 'dashboard');
   const port = config.dashboard_port || 3000;
 
@@ -113,21 +113,59 @@ async function main() {
 
   dashboard.stdout.on('data', (data) => {
     const line = data.toString().trim();
-    if (line) console.log(`[DASHBOARD] ${line}`);
+    if (line) console.log(`[DASHBOARD-OLD] ${line}`);
   });
 
   dashboard.stderr.on('data', (data) => {
     const line = data.toString().trim();
     if (line && !line.includes('ExperimentalWarning')) {
-      console.error(`[DASHBOARD] ${line}`);
+      console.error(`[DASHBOARD-OLD] ${line}`);
     }
   });
 
   dashboard.on('close', (code) => {
-    console.log(`[DASHBOARD] Exited with code ${code}`);
+    console.log(`[DASHBOARD-OLD] Exited with code ${code}`);
   });
 
-  console.log(`[INFO] Dashboard available at http://localhost:${port}`);
+  console.log(`[INFO] Old dashboard available at http://localhost:${port}`);
+
+  // ── Start HyperArbitrage HIP-3 frontend (port 3001) ──
+  const hyperFrontendDir = path.resolve(__dirname, 'HyperArbitrage-HIP3-XYZ', 'frontend');
+  const hyperPort = config.hyper_dashboard_port || 3001;
+  let hyperDashboard = null;
+
+  const hyperNextBin = path.resolve(hyperFrontendDir, 'node_modules', '.bin', 'next');
+  if (fs.existsSync(hyperFrontendDir) && fs.existsSync(hyperNextBin)) {
+    hyperDashboard = spawn(hyperNextBin, ['dev', '-H', '0.0.0.0', '-p', String(hyperPort)], {
+      cwd: hyperFrontendDir,
+      stdio: 'pipe',
+      env: {
+        ...process.env,
+        PORT: String(hyperPort),
+        NODE_ENV: 'development'
+      }
+    });
+
+    hyperDashboard.stdout.on('data', (data) => {
+      const line = data.toString().trim();
+      if (line) console.log(`[HYPER-DASHBOARD] ${line}`);
+    });
+
+    hyperDashboard.stderr.on('data', (data) => {
+      const line = data.toString().trim();
+      if (line && !line.includes('ExperimentalWarning')) {
+        console.error(`[HYPER-DASHBOARD] ${line}`);
+      }
+    });
+
+    hyperDashboard.on('close', (code) => {
+      console.log(`[HYPER-DASHBOARD] Exited with code ${code}`);
+    });
+
+    console.log(`[INFO] HyperArbitrage dashboard at http://localhost:${hyperPort}`);
+  } else {
+    console.log('[WARN] HyperArbitrage frontend not found — skipping');
+  }
 
   // ── Graceful shutdown ──
   const shutdown = () => {
@@ -135,6 +173,7 @@ async function main() {
     collector.stop();
     if (botEngine) botEngine.kill('SIGTERM');
     dashboard.kill('SIGTERM');
+    if (hyperDashboard) hyperDashboard.kill('SIGTERM');
     setTimeout(() => process.exit(0), 3000);
   };
 
