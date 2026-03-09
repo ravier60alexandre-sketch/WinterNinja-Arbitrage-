@@ -7,7 +7,10 @@ import type {
   BotCreatePayload,
   BotMetrics,
   DeployerStats,
+  OpenPosition,
+  RecentTrade,
   Trade,
+  WalletBalance,
 } from "./types";
 import { API_URL } from "./constants";
 
@@ -110,4 +113,16 @@ export function getExportCSVUrl(botId: number): string {
 
 export function getExportPDFUrl(botId: number): string {
   return `${API_URL}/api/v1/trades/${botId}/export/pdf`;
+}
+
+export async function fetchWalletBalances(): Promise<{ wallets: WalletBalance[] }> {
+  return fetchAPI("/wallet/balances");
+}
+
+export async function fetchAllOpenPositions(): Promise<{ positions: OpenPosition[]; total: number }> {
+  return fetchAPI("/wallet/open-positions");
+}
+
+export async function fetchRecentTrades(limit = 20): Promise<{ trades: RecentTrade[] }> {
+  return fetchAPI(`/wallet/recent-trades?limit=${limit}`);
 }

@@ -138,3 +138,56 @@ export interface AdminOverview {
   }>;
   aggregated: AggregatedMetrics;
 }
+
+export interface ExchangePosition {
+  coin: string | null;
+  size: string | null;
+  entry_px: string | null;
+  mark_px: string | null;
+  unrealized_pnl: string | null;
+  leverage: string | null;
+  margin_used: string | null;
+  liquidation_px: string | null;
+}
+
+export interface WalletBalance {
+  bot_id: number;
+  bot_name: string;
+  address: string;
+  account_value: string | null;
+  total_raw_usd: string | null;
+  total_margin_used: string | null;
+  withdrawable: string | null;
+  exchange_positions: ExchangePosition[];
+}
+
+export interface OpenPosition {
+  id: number;
+  bot_id: number;
+  bot_name: string;
+  pair_a: string;
+  pair_b: string;
+  size: string;
+  entry_price_a: string;
+  entry_price_b: string;
+  entry_spread: string | null;
+  edge_at_entry: string | null;
+  entry_time: string | null;
+  direction: string;
+}
+
+export interface RecentTrade {
+  id: number;
+  bot_id: number;
+  bot_name: string;
+  pair_a: string;
+  pair_b: string;
+  size: string;
+  entry_time: string | null;
+  exit_time: string | null;
+  net_pnl: string | null;
+  fees_paid: string | null;
+  close_reason: string | null;
+  slippage_a: string | null;
+  slippage_b: string | null;
+}
