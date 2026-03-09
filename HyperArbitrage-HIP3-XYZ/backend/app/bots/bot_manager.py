@@ -14,13 +14,24 @@ from app.services.deployer_perps import DeployerRegistry, load_deployer_perps, p
 logger = get_logger("bots.bot_manager")
 
 
-def _create_hl_exchange(api_key_decrypted: str, is_mainnet: bool):
-    """Create a Hyperliquid Exchange instance for a bot."""
+def _create_hl_exchange(api_key_decrypted: str, is_mainnet: bool, account_address: str | None = None):
+    """Create a Hyperliquid Exchange instance for a bot.
+
+    Args:
+        account_address: The address to trade on behalf of (sub-account or main).
+            When set, the SDK signs orders for *wallet* but targets *account_address*.
+    """
     try:
+        import eth_account
         from hyperliquid.exchange import Exchange
         from hyperliquid.utils import constants
         base_url = constants.MAINNET_API_URL if is_mainnet else constants.TESTNET_API_URL
-        return Exchange(wallet=api_key_decrypted, base_url=base_url)
+        # The SDK expects an eth_account.Account object, not a raw hex key
+        key = api_key_decrypted
+        if key.startswith("0x"):
+            key = key[2:]
+        wallet = eth_account.Account.from_key(key)
+        return Exchange(wallet=wallet, base_url=base_url, account_address=account_address)
     except ImportError:
         logger.warning("hyperliquid_sdk_not_available", msg="Using None exchange — install hyperliquid-python-sdk")
         return None
@@ -97,7 +108,9 @@ class BotManager:
 
             is_mainnet = settings.HL_MAINNET
             api_key_decrypted = decrypt_api_key(bot_model.api_key_encrypted)
-            exchange = _create_hl_exchange(api_key_decrypted, is_mainnet)
+            # Trade on sub-account when configured, otherwise main wallet
+            trading_address = bot_model.sub_account_address or bot_model.account_address
+            exchange = _create_hl_exchange(api_key_decrypted, is_mainnet, account_address=trading_address)
             hl_info = _create_hl_info(is_mainnet)
 
             # Patch SDK with deployer perp indices so HiP-3 orders work
