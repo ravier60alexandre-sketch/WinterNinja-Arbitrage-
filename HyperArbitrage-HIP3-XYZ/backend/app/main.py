@@ -22,6 +22,8 @@ setup_logging()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    # Load deployer perps registry before loading bots (HiP-3 support)
+    await bot_manager.load_deployer_registry()
     yield
     await bot_manager.stop_all()
     await close_redis()

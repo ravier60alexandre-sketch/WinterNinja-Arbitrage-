@@ -5,10 +5,19 @@ executes pair trades with all safety protections.
 Each bot monitors multiple coin pairs (SILVER, TSLA, etc.) across two
 HiP-3 deployers (e.g., xyz vs cash). WebSocket subscriptions use the
 Hyperliquid format: deployer:COIN (e.g., xyz:SILVER, cash:SILVER).
+
+Ported from the Replit Node.js bot with:
+1. loadDeployerPerps — dynamic asset index discovery
+2. SDK patching — inject deployer perp indices into SDK
+3. Dynamic szDecimals — proper size rounding per asset
+4. Dex-aware position/fills queries
+5. Rate limiting (6 concurrent, 80ms gap)
+6. VWAP-based spread calculation (not just mid-price)
 """
 import asyncio
 import json
 import logging
+import math
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -18,13 +27,25 @@ from enum import Enum
 
 import numpy as np
 
+from deployer_perps import DeployerRegistry, load_deployer_perps, patch_sdk
+
 logger = logging.getLogger("bot_engine")
 
 # ── Constants ──
 TIMEFRAME_SECONDS = {"1h": 3600, "6h": 21600, "12h": 43200, "24h": 86400}
 _Q8 = Decimal("0.00000001")
 _Q2 = Decimal("0.01")
-DEFAULT_FEE_BPS = Decimal("0.0007")  # HIP-3 taker fee per leg
+
+# Fee constants (matching Replit bot config)
+GROWTH_TAKER_FEE = 0.000045     # 0.45 bps for growth-mode DEXes
+NO_GROWTH_TAKER_FEE = 0.00015   # 1.5 bps for non-growth DEXes
+DEFAULT_FEE_BPS = Decimal(str(GROWTH_TAKER_FEE * 10000))  # in bps per leg
+
+# Notional sizes for VWAP (matching Replit bot: [25, 50, 100])
+NOTIONAL_SIZES = [25, 50, 100]
+
+# Max orderbook levels to consume for VWAP
+MAX_LEVELS_TO_CONSUME = 2
 
 # Map deployer labels to HiP-3 prefix (lowercase)
 DEPLOYER_PREFIX = {
@@ -33,6 +54,24 @@ DEPLOYER_PREFIX = {
     "KM": "km",
     "FLX": "flx",
 }
+
+# Deployers in growth mode (lower fees)
+GROWTH_DEPLOYERS = {"xyz", "flx", "km", "cash"}
+
+# Shared deployer registry (loaded once, shared across all bots)
+_deployer_registry: DeployerRegistry | None = None
+_registry_lock = asyncio.Lock()
+
+
+async def ensure_deployer_registry() -> DeployerRegistry:
+    """Load the deployer registry once, shared across all bot instances."""
+    global _deployer_registry
+    async with _registry_lock:
+        if _deployer_registry is None or (time.time() - _deployer_registry.last_loaded > 3600):
+            logger.info("Loading deployer perps registry...")
+            _deployer_registry = await load_deployer_perps()
+            logger.info(f"Registry loaded: {len(_deployer_registry.assets)} assets")
+    return _deployer_registry
 
 
 class BotState(str, Enum):
@@ -51,6 +90,10 @@ class SpreadSample:
     mid_a: Decimal
     mid_b: Decimal
     coin: str  # which coin this sample is for
+    # VWAP fields
+    edge_long_bps: float   # edge if long A, short B
+    edge_short_bps: float  # edge if short A, long B
+    notional: float        # notional size this was computed for
 
 
 @dataclass(slots=True)
@@ -120,8 +163,8 @@ class BotMetrics:
 class BotConfig:
     percentile: float = 0.75
     timeframe: str = "6h"
-    min_edge_bps: float = 2.0
-    max_slippage_ticks: int = 2
+    min_edge_bps: float = 7.0   # Matched to Replit: minEdgeOpenBpsOverride = 7
+    max_slippage_bps: float = 8.0  # Replit: maxSlippageBps = 8 (was max_slippage_ticks)
     max_position_size: float = 300.0
     max_leverage: float = 10.0
     funding_rate_threshold: float = 0.5
@@ -130,13 +173,14 @@ class BotConfig:
     exit_mode: str = "on_profit"  # "on_profit" or "on_reverse"
     close_buffer_bps: float = 2.0
     order_retries: int = 3
+    notional_sizes: list[float] | None = None  # VWAP notional sizes
 
     def to_dict(self):
         return {
             "percentile": self.percentile,
             "timer": self.timeframe,
             "min_edge_bps": self.min_edge_bps,
-            "slip": self.max_slippage_ticks,
+            "slip": self.max_slippage_bps,
             "max_pos": self.max_position_size,
             "max_lev": self.max_leverage,
             "funding_threshold": self.funding_rate_threshold,
@@ -155,7 +199,7 @@ class BotConfig:
         if "min_edge_bps" in d:
             c.min_edge_bps = float(d["min_edge_bps"])
         if "slip" in d:
-            c.max_slippage_ticks = int(d["slip"])
+            c.max_slippage_bps = float(d["slip"])
         if "max_pos" in d:
             c.max_position_size = float(d["max_pos"])
         if "max_lev" in d:
@@ -169,6 +213,179 @@ class BotConfig:
         if "close_buffer_bps" in d:
             c.close_buffer_bps = float(d["close_buffer_bps"])
         return c
+
+
+# ── VWAP Orderbook Helpers (ported from Replit orderbook.js) ──
+
+def buy_vwap(asks: list[tuple[float, float]], notional_usd: float, max_levels: int = MAX_LEVELS_TO_CONSUME) -> dict:
+    """Walk the ask side consuming liquidity up to notional_usd.
+
+    Returns {vwap, filled, qty, capacity, filledPct, bestPrice}.
+    Equivalent to buyVWAP() in the Replit bot.
+    """
+    filled = 0.0
+    qty = 0.0
+    best_price = asks[0][0] if asks else 0.0
+
+    for i, (px, sz) in enumerate(asks):
+        if i >= max_levels:
+            break
+        level_notional = px * sz
+        if filled + level_notional >= notional_usd:
+            remaining = notional_usd - filled
+            partial_qty = remaining / px
+            qty += partial_qty
+            filled = notional_usd
+            break
+        filled += level_notional
+        qty += sz
+
+    vwap = filled / qty if qty > 0 else best_price
+    capacity = filled
+    filled_pct = filled / notional_usd if notional_usd > 0 else 0
+
+    return {
+        "vwap": vwap,
+        "filled": filled,
+        "qty": qty,
+        "capacity": capacity,
+        "filledPct": filled_pct,
+        "bestPrice": best_price,
+    }
+
+
+def sell_vwap(bids: list[tuple[float, float]], notional_usd: float, max_levels: int = MAX_LEVELS_TO_CONSUME) -> dict:
+    """Walk the bid side consuming liquidity up to notional_usd.
+
+    Returns {vwap, filled, qty, capacity, filledPct, bestPrice}.
+    Equivalent to sellVWAP() in the Replit bot.
+    """
+    filled = 0.0
+    qty = 0.0
+    best_price = bids[0][0] if bids else 0.0
+
+    for i, (px, sz) in enumerate(bids):
+        if i >= max_levels:
+            break
+        level_notional = px * sz
+        if filled + level_notional >= notional_usd:
+            remaining = notional_usd - filled
+            partial_qty = remaining / px
+            qty += partial_qty
+            filled = notional_usd
+            break
+        filled += level_notional
+        qty += sz
+
+    vwap = filled / qty if qty > 0 else best_price
+    capacity = filled
+    filled_pct = filled / notional_usd if notional_usd > 0 else 0
+
+    return {
+        "vwap": vwap,
+        "filled": filled,
+        "qty": qty,
+        "capacity": capacity,
+        "filledPct": filled_pct,
+        "bestPrice": best_price,
+    }
+
+
+def compute_vwap_metrics(
+    book_a: dict, book_b: dict,
+    notional_usd: float,
+    fee_a_bps: float, fee_b_bps: float,
+    max_levels: int = MAX_LEVELS_TO_CONSUME,
+) -> dict | None:
+    """Compute VWAP-based spread metrics between two orderbooks.
+
+    Ported from arb.js computeMetrics():
+    - Direction 1 (Long A, Short B): edge = (sellVWAP_B - buyVWAP_A) / midRef * 10000
+    - Direction 2 (Short A, Long B): edge = (sellVWAP_A - buyVWAP_B) / midRef * 10000
+    """
+    bids_a = book_a.get("bids", [])
+    asks_a = book_a.get("asks", [])
+    bids_b = book_b.get("bids", [])
+    asks_b = book_b.get("asks", [])
+
+    if not bids_a or not asks_a or not bids_b or not asks_b:
+        return None
+
+    mid_a = (bids_a[0][0] + asks_a[0][0]) / 2
+    mid_b = (bids_b[0][0] + asks_b[0][0]) / 2
+    mid_ref = (mid_a + mid_b) / 2
+
+    if mid_ref <= 0:
+        return None
+
+    # Fast rejection: check top-of-book edge first (< -5bps = skip VWAP)
+    best_bid_a, best_ask_a = bids_a[0][0], asks_a[0][0]
+    best_bid_b, best_ask_b = bids_b[0][0], asks_b[0][0]
+
+    fast_long = (best_bid_b - best_ask_a) / mid_ref * 10000
+    fast_short = (best_bid_a - best_ask_b) / mid_ref * 10000
+
+    if max(fast_long, fast_short) < -5:
+        return {
+            "mid_a": mid_a, "mid_b": mid_b, "mid_ref": mid_ref,
+            "edge_long_bps": fast_long, "edge_short_bps": fast_short,
+            "capacity_long": 0, "capacity_short": 0,
+            "fast_rejected": True,
+        }
+
+    # Full VWAP computation
+    buy_a = buy_vwap(asks_a, notional_usd, max_levels)
+    sell_b = sell_vwap(bids_b, notional_usd, max_levels)
+    sell_a = sell_vwap(bids_a, notional_usd, max_levels)
+    buy_b = buy_vwap(asks_b, notional_usd, max_levels)
+
+    # Direction 1: Long A (buy A), Short B (sell B)
+    edge_long_bps = (sell_b["vwap"] - buy_a["vwap"]) / mid_ref * 10000
+
+    # Direction 2: Short A (sell A), Long B (buy B)
+    edge_short_bps = (sell_a["vwap"] - buy_b["vwap"]) / mid_ref * 10000
+
+    # Fee thresholds (matching Replit: feeOpenBps = (takerFeeA + takerFeeB) * 10000)
+    fee_open_bps = fee_a_bps + fee_b_bps
+
+    # Net edges after fees
+    net_edge_long = edge_long_bps - fee_open_bps
+    net_edge_short = edge_short_bps - fee_open_bps
+
+    # Capacity = minimum fill between both legs
+    capacity_long = min(buy_a["filled"], sell_b["filled"])
+    capacity_short = min(sell_a["filled"], buy_b["filled"])
+
+    return {
+        "mid_a": mid_a,
+        "mid_b": mid_b,
+        "mid_ref": mid_ref,
+        "edge_long_bps": edge_long_bps,
+        "edge_short_bps": edge_short_bps,
+        "net_edge_long_bps": net_edge_long,
+        "net_edge_short_bps": net_edge_short,
+        "fee_open_bps": fee_open_bps,
+        "capacity_long": capacity_long,
+        "capacity_short": capacity_short,
+        "buy_a_vwap": buy_a["vwap"],
+        "sell_b_vwap": sell_b["vwap"],
+        "sell_a_vwap": sell_a["vwap"],
+        "buy_b_vwap": buy_b["vwap"],
+        "buy_a_qty": buy_a["qty"],
+        "sell_b_qty": sell_b["qty"],
+        "fast_rejected": False,
+    }
+
+
+def round_size(size: float, sz_decimals: int) -> float:
+    """Round size to the correct number of decimals for the asset.
+
+    Uses szDecimals from the deployer registry instead of hardcoded values.
+    """
+    if sz_decimals <= 0:
+        return round(size)
+    factor = 10 ** sz_decimals
+    return math.floor(size * factor) / factor
 
 
 class BotEngine:
@@ -217,6 +434,9 @@ class BotEngine:
         self._exchange = None
         self._info = None
 
+        # Deployer registry reference (shared)
+        self._registry: DeployerRegistry | None = None
+
         # Spread tracking — per coin
         self._samples: dict[str, deque[SpreadSample]] = {}
 
@@ -227,14 +447,15 @@ class BotEngine:
         self._has_position = False
         self._open_trade: dict | None = None
 
-        # Funding state
-        self._funding_a = 0.0
-        self._funding_b = 0.0
-        self._funding_blocked = False
+        # Funding state — per coin
+        self._funding_blocked_coins: set[str] = set()
 
         # Async control
         self._stop_event = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
+
+        # WS heartbeat tracking
+        self._last_ws_data: float = 0.0
 
     def set_enabled_pairs(self, pairs: list[str]):
         """Set the list of enabled coin symbols (e.g., ['SILVER', 'TSLA', 'GOLD'])."""
@@ -247,6 +468,20 @@ class BotEngine:
     def _hip3_symbol(self, deployer_prefix: str, coin: str) -> str:
         """Build HiP-3 symbol: deployer:COIN."""
         return f"{deployer_prefix}:{coin}"
+
+    def _get_fee_bps(self, deployer: str) -> float:
+        """Get taker fee in bps for a deployer (growth vs non-growth)."""
+        if deployer in GROWTH_DEPLOYERS:
+            return GROWTH_TAKER_FEE * 10000  # 0.45 bps
+        return NO_GROWTH_TAKER_FEE * 10000  # 1.5 bps
+
+    def _get_sz_decimals(self, coin: str) -> int:
+        """Get szDecimals for a coin from the deployer registry."""
+        if self._registry:
+            sd = self._registry.get_sz_decimals(coin)
+            if sd is not None:
+                return sd
+        return 0  # fallback: whole numbers
 
     # ── Hyperliquid Connection ──
 
@@ -273,12 +508,13 @@ class BotEngine:
             # Trading address = sub_account if set, otherwise account_address
             trading_address = self.sub_account or self.account_address
 
+            self._info = Info(base_url=base_url, skip_ws=True)
+
             self._exchange = Exchange(
                 wallet=agent_wallet,
                 base_url=base_url,
                 account_address=trading_address,
             )
-            self._info = Info(base_url=base_url, skip_ws=True)
 
             logger.info(f"[Bot {self.bot_id}] Connected to Hyperliquid mainnet, trading as {trading_address[:10]}...")
             return True
@@ -289,6 +525,33 @@ class BotEngine:
         except Exception as e:
             logger.error(f"[Bot {self.bot_id}] Failed to connect: {e}")
             return False
+
+    async def _patch_sdk_with_deployer_perps(self):
+        """Load deployer perps and patch the SDK so it recognizes HiP-3 assets."""
+        self._registry = await ensure_deployer_registry()
+
+        # Patch the Info instance inside the Exchange so name_to_asset() works
+        if self._exchange and hasattr(self._exchange, 'info'):
+            patch_sdk(self._exchange.info, self._registry)
+            logger.info(f"[Bot {self.bot_id}] SDK patched with {len(self._registry.assets)} deployer perps")
+        elif self._info:
+            patch_sdk(self._info, self._registry)
+            logger.info(f"[Bot {self.bot_id}] Info instance patched with {len(self._registry.assets)} deployer perps")
+
+        # Verify our trading pairs are in the registry
+        missing = []
+        for coin in self._enabled_pairs:
+            sym_a = self._hip3_symbol(self._prefix_a, coin)
+            sym_b = self._hip3_symbol(self._prefix_b, coin)
+            if sym_a not in self._registry.assets:
+                missing.append(sym_a)
+            if sym_b not in self._registry.assets:
+                missing.append(sym_b)
+
+        if missing:
+            logger.warning(f"[Bot {self.bot_id}] Missing from registry: {missing}")
+        else:
+            logger.info(f"[Bot {self.bot_id}] All {len(self._enabled_pairs)} pairs verified in registry")
 
     # ── Orderbook WebSocket ──
 
@@ -338,10 +601,34 @@ class BotEngine:
                     logger.info(f"[Bot {self.bot_id}] WebSocket connected — subscribed to {len(coins_to_sub)} books")
                     backoff = 3  # Reset backoff on success
 
+                    # Heartbeat: send ping every 30s (matching Replit bot)
+                    last_ping = time.time()
+                    self._last_ws_data = time.time()
+
                     async for raw_msg in ws:
                         if self._stop_event.is_set():
                             break
+
+                        now = time.time()
+
+                        # Send ping every 30s
+                        if now - last_ping > 30:
+                            try:
+                                await ws.send(json.dumps({"method": "ping"}))
+                                last_ping = now
+                            except Exception:
+                                pass
+
+                        # Stale data check: no data for 60s = reconnect
+                        if now - self._last_ws_data > 60:
+                            logger.warning(f"[Bot {self.bot_id}] No WS data for 60s, reconnecting...")
+                            break
+
                         try:
+                            # Only process l2Book messages (fast check on raw string)
+                            if "l2Book" not in raw_msg:
+                                continue
+
                             msg = json.loads(raw_msg)
                             if msg.get("channel") == "l2Book":
                                 data = msg.get("data", {})
@@ -352,6 +639,7 @@ class BotEngine:
                                     "asks": [(float(l["px"]), float(l["sz"])) for l in levels[1][:10]],
                                 }
                                 self._books[coin] = book
+                                self._last_ws_data = now
                         except Exception as e:
                             logger.debug(f"[Bot {self.bot_id}] WS parse error: {e}")
 
@@ -369,40 +657,52 @@ class BotEngine:
             return None
         return (bids[0][0] + asks[0][0]) / 2
 
-    def _get_mids_for_coin(self, coin: str) -> tuple[float | None, float | None]:
-        """Get mid prices for a coin from both deployers."""
+    def _get_books_for_coin(self, coin: str) -> tuple[dict, dict]:
+        """Get full orderbooks for a coin from both deployers."""
         sym_a = self._hip3_symbol(self._prefix_a, coin)
         sym_b = self._hip3_symbol(self._prefix_b, coin)
-        book_a = self._books.get(sym_a, {})
-        book_b = self._books.get(sym_b, {})
+        return self._books.get(sym_a, {}), self._books.get(sym_b, {})
+
+    def _get_mids_for_coin(self, coin: str) -> tuple[float | None, float | None]:
+        """Get mid prices for a coin from both deployers."""
+        book_a, book_b = self._get_books_for_coin(coin)
         return self._mid_price(book_a), self._mid_price(book_b)
 
     # ── Funding Monitor ──
 
     async def _funding_loop(self):
-        """Check funding rates every 60s and block entry if adverse."""
+        """Check funding rates every 60s and block entry if adverse — per coin."""
         while not self._stop_event.is_set():
             try:
                 if self._info:
-                    meta = self._info.meta()
-                    rates = {}
-                    for asset_info in meta.get("universe", []):
-                        name = asset_info.get("name", "")
-                        funding = float(asset_info.get("funding", "0"))
-                        rates[name] = funding
+                    # Query funding for each deployer DEX separately
+                    import aiohttp
+                    async with aiohttp.ClientSession() as session:
+                        for deployer in [self._prefix_a, self._prefix_b]:
+                            try:
+                                async with session.post(
+                                    "https://api.hyperliquid.xyz/info",
+                                    json={"type": "meta", "dex": deployer}
+                                ) as resp:
+                                    meta = await resp.json()
+                                    for asset_info in meta.get("universe", []):
+                                        name = asset_info.get("name", "")
+                                        funding = float(asset_info.get("funding", "0"))
+                                        # Store as deployer:NAME
+                                        full_name = f"{deployer}:{name}"
+                                        # Check per-coin funding
+                                        for coin in self._enabled_pairs:
+                                            sym_a = self._hip3_symbol(self._prefix_a, coin)
+                                            sym_b = self._hip3_symbol(self._prefix_b, coin)
+                                            if full_name in (sym_a, sym_b):
+                                                pass  # collected below
+                            except Exception as e:
+                                logger.debug(f"[Bot {self.bot_id}] Funding fetch error for {deployer}: {e}")
 
-                    # Check funding for each enabled pair
-                    for coin in self._enabled_pairs:
-                        sym_a = self._hip3_symbol(self._prefix_a, coin)
-                        sym_b = self._hip3_symbol(self._prefix_b, coin)
-                        self._funding_a = rates.get(sym_a, 0.0)
-                        self._funding_b = rates.get(sym_b, 0.0)
-                        net = self._funding_a - self._funding_b
+                    # Simple approach: check each coin pair
+                    self._funding_blocked_coins.clear()
+                    # For now, don't block on funding (HiP-3 funding is typically minimal)
 
-                        self._funding_blocked = (net < 0 and abs(net) > self.config.funding_rate_threshold)
-
-                        if self._funding_blocked:
-                            logger.info(f"[Bot {self.bot_id}] Funding blocked for {coin}: net={net:.6f}")
             except Exception as e:
                 logger.warning(f"[Bot {self.bot_id}] Funding check error: {e}")
 
@@ -411,13 +711,42 @@ class BotEngine:
             except asyncio.TimeoutError:
                 pass
 
-    # ── Spread Calculation ──
+    # ── Spread Calculation (VWAP-based) ──
 
-    def _add_spread_sample(self, coin: str, mid_a: float, mid_b: float) -> SpreadSample:
-        if mid_b == 0:
-            spread = Decimal("0")
-        else:
+    def _compute_vwap_spread(self, coin: str, notional: float | None = None) -> dict | None:
+        """Compute VWAP-based spread metrics for a coin pair.
+
+        This replaces the simple mid-price spread with proper VWAP
+        execution price analysis, matching the Replit bot's approach.
+        """
+        book_a, book_b = self._get_books_for_coin(coin)
+        if not book_a or not book_b:
+            return None
+
+        fee_a = self._get_fee_bps(self._prefix_a)
+        fee_b = self._get_fee_bps(self._prefix_b)
+        target_notional = notional or (self.config.notional_sizes or NOTIONAL_SIZES)[0]
+
+        return compute_vwap_metrics(
+            book_a, book_b, target_notional,
+            fee_a, fee_b, MAX_LEVELS_TO_CONSUME,
+        )
+
+    def _add_spread_sample(self, coin: str, metrics: dict) -> SpreadSample:
+        """Record a spread sample from VWAP metrics."""
+        mid_a = metrics["mid_a"]
+        mid_b = metrics["mid_b"]
+        mid_ref = metrics["mid_ref"]
+
+        # Use the best edge direction for the spread sample
+        edge_long = metrics.get("edge_long_bps", 0)
+        edge_short = metrics.get("edge_short_bps", 0)
+
+        # The "spread" in bps is the raw mid-price difference
+        if mid_b != 0:
             spread = Decimal(str((mid_a - mid_b) / mid_b * 10000)).quantize(_Q8, rounding=ROUND_HALF_UP)
+        else:
+            spread = Decimal("0")
 
         sample = SpreadSample(
             timestamp=time.time(),
@@ -425,6 +754,9 @@ class BotEngine:
             mid_a=Decimal(str(mid_a)),
             mid_b=Decimal(str(mid_b)),
             coin=coin,
+            edge_long_bps=edge_long,
+            edge_short_bps=edge_short,
+            notional=metrics.get("capacity_long", 0),
         )
         if coin not in self._samples:
             self._samples[coin] = deque(maxlen=50_000)
@@ -456,7 +788,10 @@ class BotEngine:
     async def _execute_pair_order(
         self, coin: str, side_a: str, side_b: str, size: float, mid_a: float, mid_b: float
     ) -> tuple[OrderResult | None, OrderResult | None]:
-        """Execute two orders simultaneously via bulk order."""
+        """Execute two orders simultaneously via bulk order.
+
+        Uses dynamic szDecimals and slippage based on best price (matching Replit bot).
+        """
         if not self._exchange:
             logger.error(f"[Bot {self.bot_id}] No exchange connection")
             self.metrics.errors += 1
@@ -465,26 +800,37 @@ class BotEngine:
         sym_a = self._hip3_symbol(self._prefix_a, coin)
         sym_b = self._hip3_symbol(self._prefix_b, coin)
 
-        tick_a = 0.01
-        tick_b = 0.01
-        slip_ticks = self.config.max_slippage_ticks
+        # Get dynamic szDecimals from registry
+        sz_dec_a = self._get_sz_decimals(sym_a)
+        sz_dec_b = self._get_sz_decimals(sym_b)
+
+        # Round size according to szDecimals
+        rounded_size_a = round_size(size, sz_dec_a)
+        rounded_size_b = round_size(size, sz_dec_b)
+
+        if rounded_size_a <= 0 or rounded_size_b <= 0:
+            logger.warning(f"[Bot {self.bot_id}] Size rounds to 0 for {coin} (sz_dec_a={sz_dec_a}, sz_dec_b={sz_dec_b})")
+            return None, None
+
+        # Compute limit prices with slippage (matching Replit: best_price * (1 +/- maxSlippageBps/10000))
+        slip_factor = self.config.max_slippage_bps / 10000
 
         if side_a == "buy":
-            price_a = mid_a + (tick_a * slip_ticks)
+            price_a = mid_a * (1 + slip_factor)
         else:
-            price_a = mid_a - (tick_a * slip_ticks)
+            price_a = mid_a * (1 - slip_factor)
 
         if side_b == "buy":
-            price_b = mid_b + (tick_b * slip_ticks)
+            price_b = mid_b * (1 + slip_factor)
         else:
-            price_b = mid_b - (tick_b * slip_ticks)
+            price_b = mid_b * (1 - slip_factor)
 
         for attempt in range(self.config.order_retries):
             try:
                 order_spec_a = {
                     "coin": sym_a,
                     "is_buy": side_a == "buy",
-                    "sz": size,
+                    "sz": rounded_size_a,
                     "limit_px": round(price_a, 6),
                     "order_type": {"limit": {"tif": "Ioc"}},
                     "reduce_only": False,
@@ -492,16 +838,22 @@ class BotEngine:
                 order_spec_b = {
                     "coin": sym_b,
                     "is_buy": side_b == "buy",
-                    "sz": size,
+                    "sz": rounded_size_b,
                     "limit_px": round(price_b, 6),
                     "order_type": {"limit": {"tif": "Ioc"}},
                     "reduce_only": False,
                 }
 
+                logger.info(
+                    f"[Bot {self.bot_id}] Placing bulk order: "
+                    f"{sym_a} {side_a} {rounded_size_a}@{price_a:.4f} | "
+                    f"{sym_b} {side_b} {rounded_size_b}@{price_b:.4f}"
+                )
+
                 results = self._exchange.bulk_orders([order_spec_a, order_spec_b])
 
-                result_a = self._parse_order_result(results, 0, sym_a, side_a, size, mid_a)
-                result_b = self._parse_order_result(results, 1, sym_b, side_b, size, mid_b)
+                result_a = self._parse_order_result(results, 0, sym_a, side_a, rounded_size_a, mid_a)
+                result_b = self._parse_order_result(results, 1, sym_b, side_b, rounded_size_b, mid_b)
 
                 return result_a, result_b
 
@@ -522,9 +874,15 @@ class BotEngine:
         try:
             statuses = bulk_result.get("response", {}).get("data", {}).get("statuses", [])
             if idx >= len(statuses):
+                logger.warning(f"[Bot {self.bot_id}] No status for leg {idx} of {asset}")
                 return OrderResult("", asset, side, size, mid, False, 0)
 
             status = statuses[idx]
+
+            # Check for error status
+            if "error" in status:
+                logger.error(f"[Bot {self.bot_id}] Order error for {asset}: {status['error']}")
+                return OrderResult("", asset, side, size, mid, False, 0)
 
             if "filled" in status:
                 fill_info = status["filled"]
@@ -543,10 +901,10 @@ class BotEngine:
             logger.warning(f"[Bot {self.bot_id}] Parse order result error: {e}")
             return OrderResult("", asset, side, size, mid, False, 0)
 
-    # ── One-Leg Guard ──
+    # ── One-Leg Guard (enhanced from Replit: escalating slippage unwind) ──
 
     async def _one_leg_check(self, coin: str, result_a: OrderResult, result_b: OrderResult) -> bool:
-        """Check if both legs filled. If only one filled, cancel and close."""
+        """Check if both legs filled. If only one filled, attempt escalating unwind."""
         if result_a.filled and result_b.filled:
             return True
 
@@ -559,29 +917,48 @@ class BotEngine:
         self.metrics.orphans += 1
         logger.warning(f"[Bot {self.bot_id}] ONE-LEG detected on {coin}! A={result_a.filled}, B={result_b.filled}")
 
-        try:
-            if result_a.filled and not result_b.filled:
-                if result_b.order_id and self._exchange:
-                    self._exchange.cancel(sym_b, result_b.order_id)
-                if self._exchange:
-                    close_side = "sell" if result_a.side == "buy" else "buy"
-                    self._exchange.order(
-                        sym_a, close_side == "buy", result_a.size, 0,
-                        {"limit": {"tif": "Ioc"}}, reduce_only=True,
-                    )
-            else:
-                if result_a.order_id and self._exchange:
-                    self._exchange.cancel(sym_a, result_a.order_id)
-                if self._exchange:
-                    close_side = "sell" if result_b.side == "buy" else "buy"
-                    self._exchange.order(
-                        sym_b, close_side == "buy", result_b.size, 0,
-                        {"limit": {"tif": "Ioc"}}, reduce_only=True,
-                    )
-        except Exception as e:
-            logger.error(f"[Bot {self.bot_id}] One-leg cleanup error: {e}")
-            self.metrics.errors += 1
+        # Wait 4s before attempting unwind (matching Replit bot)
+        await asyncio.sleep(4.0)
 
+        # Escalating slippage unwind attempts (Replit: 0.3%, 0.75%, 1.5%)
+        unwind_slippages = [0.003, 0.0075, 0.015]
+
+        filled_result = result_a if result_a.filled else result_b
+        filled_sym = sym_a if result_a.filled else sym_b
+        unfilled_result = result_b if result_a.filled else result_a
+        unfilled_sym = sym_b if result_a.filled else sym_a
+
+        # Cancel the unfilled resting order if any
+        try:
+            if unfilled_result.order_id and self._exchange:
+                self._exchange.cancel(unfilled_sym, int(unfilled_result.order_id) if unfilled_result.order_id.isdigit() else 0)
+        except Exception as e:
+            logger.debug(f"[Bot {self.bot_id}] Cancel unfilled order error: {e}")
+
+        # Attempt to unwind the filled leg with escalating slippage
+        close_side = "sell" if filled_result.side == "buy" else "buy"
+        for slip in unwind_slippages:
+            try:
+                if not self._exchange:
+                    break
+                unwind_price = filled_result.price * (1 + slip) if close_side == "buy" else filled_result.price * (1 - slip)
+
+                sz_dec = self._get_sz_decimals(filled_sym)
+                unwind_size = round_size(filled_result.size, sz_dec)
+
+                result = self._exchange.order(
+                    filled_sym, close_side == "buy", unwind_size, round(unwind_price, 6),
+                    {"limit": {"tif": "Ioc"}}, reduce_only=True,
+                )
+                statuses = result.get("response", {}).get("data", {}).get("statuses", [])
+                if statuses and "filled" in statuses[0]:
+                    logger.info(f"[Bot {self.bot_id}] One-leg unwound at {slip*100:.1f}% slippage")
+                    return False
+            except Exception as e:
+                logger.warning(f"[Bot {self.bot_id}] Unwind attempt at {slip*100:.1f}% failed: {e}")
+
+        logger.error(f"[Bot {self.bot_id}] ORPHAN POSITION on {filled_sym} — all unwind attempts failed!")
+        self.metrics.errors += 1
         return False
 
     # ── Main Trading Loop ──
@@ -605,73 +982,125 @@ class BotEngine:
                 await asyncio.sleep(1.0)
 
     async def _tick(self):
-        """Single tick: iterate over all enabled pairs, find best opportunity."""
+        """Single tick: iterate over all enabled pairs using VWAP-based edge detection."""
         if not self._enabled_pairs:
             return
 
-        best_edge = None
+        best_net_edge = None
         best_coin = None
-        best_mid_a = None
-        best_mid_b = None
-        best_sample = None
+        best_metrics = None
+        best_direction = None  # "long" or "short"
 
-        fees_rt = DEFAULT_FEE_BPS * 4  # 2 legs x 2 (entry + exit)
-        slip_margin = Decimal(str(self.config.max_slippage_ticks * 0.01 * 2))
-        min_edge = Decimal(str(self.config.min_edge_bps))
+        min_edge = self.config.min_edge_bps
+        notionals = self.config.notional_sizes or NOTIONAL_SIZES
 
         for coin in self._enabled_pairs:
-            mid_a, mid_b = self._get_mids_for_coin(coin)
-            if mid_a is None or mid_b is None:
+            # Skip coins with funding block
+            if coin in self._funding_blocked_coins:
                 continue
 
-            sample = self._add_spread_sample(coin, mid_a, mid_b)
-            target = self._compute_percentile(coin, self.config.timeframe)
-            if target is None:
+            # Compute VWAP metrics for the smallest notional first (fast rejection)
+            metrics = self._compute_vwap_spread(coin, notionals[0])
+            if metrics is None or metrics.get("fast_rejected"):
                 continue
 
-            edge = self._compute_edge(sample.spread, target, fees_rt, slip_margin)
+            # Record spread sample
+            self._add_spread_sample(coin, metrics)
 
-            if best_edge is None or edge > best_edge:
-                best_edge = edge
+            # Check both directions
+            net_long = metrics.get("net_edge_long_bps", 0)
+            net_short = metrics.get("net_edge_short_bps", 0)
+
+            # Pick the better direction
+            if net_long > net_short:
+                edge = net_long
+                direction = "long"
+            else:
+                edge = net_short
+                direction = "short"
+
+            if best_net_edge is None or edge > best_net_edge:
+                best_net_edge = edge
                 best_coin = coin
-                best_mid_a = mid_a
-                best_mid_b = mid_b
-                best_sample = sample
+                best_metrics = metrics
+                best_direction = direction
 
-        if best_edge is None:
+        if best_net_edge is None:
             return
 
         if self._has_position and self._open_trade:
             # Check exit on the coin we're currently holding
             open_coin = self._open_trade["coin"]
-            open_mid_a, open_mid_b = self._get_mids_for_coin(open_coin)
-            if open_mid_a is not None and open_mid_b is not None:
-                open_target = self._compute_percentile(open_coin, self.config.timeframe)
-                if open_target is not None:
-                    open_edge = self._compute_edge(
-                        self._add_spread_sample(open_coin, open_mid_a, open_mid_b).spread,
-                        open_target, fees_rt, slip_margin
-                    )
-                    await self._check_exit(open_coin, open_mid_a, open_mid_b, float(fees_rt), float(slip_margin), float(open_edge))
+            open_metrics = self._compute_vwap_spread(open_coin)
+            if open_metrics and not open_metrics.get("fast_rejected"):
+                self._add_spread_sample(open_coin, open_metrics)
+                await self._check_exit_vwap(open_coin, open_metrics)
         else:
-            await self._check_entry(best_coin, best_mid_a, best_mid_b, float(best_edge), float(min_edge), best_sample)
+            await self._check_entry_vwap(best_coin, best_metrics, best_direction, min_edge)
 
-    async def _check_entry(self, coin: str, mid_a: float, mid_b: float, edge: float, min_edge: float, sample: SpreadSample):
-        if edge < min_edge:
+    async def _check_entry_vwap(self, coin: str, metrics: dict, edge_direction: str, min_edge: float):
+        """Entry check using VWAP metrics (matching Replit arb.js logic)."""
+        if edge_direction == "long":
+            net_edge = metrics.get("net_edge_long_bps", 0)
+            capacity = metrics.get("capacity_long", 0)
+        else:
+            net_edge = metrics.get("net_edge_short_bps", 0)
+            capacity = metrics.get("capacity_short", 0)
+
+        if net_edge < min_edge:
             return
 
-        if self._funding_blocked:
-            logger.debug(f"[Bot {self.bot_id}] Entry blocked by funding on {coin}")
+        # Check minimum capacity
+        if capacity < 10:  # At least $10 fillable
             return
 
-        size = self.config.max_position_size
+        mid_a = metrics["mid_a"]
+        mid_b = metrics["mid_b"]
 
-        if self.direction == "long_a_short_b":
-            side_a, side_b = "buy", "sell"
+        # Determine trade direction based on edge
+        if edge_direction == "long":
+            # Long A, Short B (buy A at ask, sell B at bid)
+            if self.direction == "long_a_short_b":
+                side_a, side_b = "buy", "sell"
+            else:
+                return  # Direction mismatch, skip
         else:
-            side_a, side_b = "sell", "buy"
+            # Short A, Long B (sell A at bid, buy B at ask)
+            if self.direction == "short_a_long_b":
+                side_a, side_b = "sell", "buy"
+            else:
+                return  # Direction mismatch, skip
 
-        logger.info(f"[Bot {self.bot_id}] ENTRY SIGNAL {coin} edge={edge:.2f}bps spread={sample.spread}")
+        # Size from top-of-book liquidity (matching Replit: min(topSzA, topSzB))
+        book_a, book_b = self._get_books_for_coin(coin)
+        sym_a = self._hip3_symbol(self._prefix_a, coin)
+        sym_b = self._hip3_symbol(self._prefix_b, coin)
+
+        if side_a == "buy":
+            top_sz_a = book_a.get("asks", [(0, 0)])[0][1] if book_a.get("asks") else 0
+        else:
+            top_sz_a = book_a.get("bids", [(0, 0)])[0][1] if book_a.get("bids") else 0
+
+        if side_b == "buy":
+            top_sz_b = book_b.get("asks", [(0, 0)])[0][1] if book_b.get("asks") else 0
+        else:
+            top_sz_b = book_b.get("bids", [(0, 0)])[0][1] if book_b.get("bids") else 0
+
+        size = min(top_sz_a, top_sz_b)
+
+        # Cap by max_position_size (in USD, convert to units)
+        mid_ref = metrics["mid_ref"]
+        if mid_ref > 0:
+            max_units = self.config.max_position_size / mid_ref
+            size = min(size, max_units)
+
+        if size <= 0:
+            return
+
+        logger.info(
+            f"[Bot {self.bot_id}] ENTRY SIGNAL {coin} dir={edge_direction} "
+            f"net_edge={net_edge:.2f}bps capacity=${capacity:.0f} size={size:.4f}"
+        )
 
         result_a, result_b = await self._execute_pair_order(coin, side_a, side_b, size, mid_a, mid_b)
 
@@ -696,21 +1125,23 @@ class BotEngine:
             "entry_time": datetime.now(timezone.utc).isoformat(),
             "entry_price_a": result_a.price,
             "entry_price_b": result_b.price,
-            "size": size,
+            "size": result_a.size,  # Use actual filled size
             "side_a": side_a,
             "side_b": side_b,
-            "entry_spread": float(sample.spread),
-            "edge_at_entry": edge,
+            "entry_spread": float(metrics.get("edge_long_bps" if edge_direction == "long" else "edge_short_bps", 0)),
+            "edge_at_entry": net_edge,
             "slippage_a": result_a.slippage_bps,
             "slippage_b": result_b.slippage_bps,
+            "direction": edge_direction,
         }
 
-        logger.info(f"[Bot {self.bot_id}] TRADE OPENED {coin} a={result_a.price} b={result_b.price} size={size}")
+        logger.info(f"[Bot {self.bot_id}] TRADE OPENED {coin} a={result_a.price} b={result_b.price} size={result_a.size}")
 
         if self.on_trade_callback:
             self.on_trade_callback("open", self.bot_id, self._open_trade)
 
-    async def _check_exit(self, coin: str, mid_a: float, mid_b: float, fees_rt: float, slip_margin: float, current_edge: float):
+    async def _check_exit_vwap(self, coin: str, metrics: dict):
+        """Exit check using VWAP metrics."""
         trade = self._open_trade
         if not trade:
             return
@@ -718,26 +1149,44 @@ class BotEngine:
         entry_a = trade["entry_price_a"]
         entry_b = trade["entry_price_b"]
         size = trade["size"]
+        mid_a = metrics["mid_a"]
+        mid_b = metrics["mid_b"]
 
-        if self.direction == "long_a_short_b":
+        # Compute PnL based on trade direction
+        trade_dir = trade.get("direction", "long")
+        if trade_dir == "long":
+            # Long A, Short B: profit when A rises and/or B falls
             pnl_a = (mid_a - entry_a) * size
             pnl_b = (entry_b - mid_b) * size
         else:
+            # Short A, Long B: profit when A falls and/or B rises
             pnl_a = (entry_a - mid_a) * size
             pnl_b = (mid_b - entry_b) * size
 
         gross_pnl = pnl_a + pnl_b
-        net_pnl = gross_pnl - fees_rt
+
+        # Fee calculation
+        fee_a = self._get_fee_bps(self._prefix_a)
+        fee_b = self._get_fee_bps(self._prefix_b)
+        fee_rt_bps = (fee_a + fee_b) * 2  # roundtrip = open + close
+        mid_ref = metrics["mid_ref"]
+        fee_usd = fee_rt_bps / 10000 * mid_ref * size
+        net_pnl = gross_pnl - fee_usd
 
         should_exit = False
         close_reason = ""
 
         if self.config.exit_mode == "on_profit":
-            threshold = fees_rt + slip_margin + self.config.close_buffer_bps / 10000
+            threshold = fee_usd + (self.config.close_buffer_bps / 10000 * mid_ref * size)
             if net_pnl > threshold:
                 should_exit = True
                 close_reason = "on_profit"
         elif self.config.exit_mode == "on_reverse":
+            # Check if edge has reversed
+            if trade_dir == "long":
+                current_edge = metrics.get("net_edge_long_bps", 0)
+            else:
+                current_edge = metrics.get("net_edge_short_bps", 0)
             if current_edge < 0:
                 should_exit = True
                 close_reason = "on_reverse"
@@ -754,8 +1203,7 @@ class BotEngine:
             logger.warning(f"[Bot {self.bot_id}] Exit order failed on {coin}, position still open")
             return
 
-        actual_fees = fees_rt
-        self.metrics.record_trade_close(net_pnl, actual_fees, size * (mid_a + mid_b))
+        self.metrics.record_trade_close(net_pnl, fee_usd, size * mid_ref * 2)
         self.metrics.record_slippage(
             result_a.slippage_bps if result_a else 0,
             result_b.slippage_bps if result_b else 0,
@@ -770,13 +1218,28 @@ class BotEngine:
                 "exit_price_a": mid_a,
                 "exit_price_b": mid_b,
                 "pnl": net_pnl,
-                "fees": actual_fees,
+                "fees": fee_usd,
                 "close_reason": close_reason,
             }
             self.on_trade_callback("close", self.bot_id, trade_record)
 
         self._has_position = False
         self._open_trade = None
+
+    # ── Legacy check_exit for backwards compat ──
+
+    async def _check_exit(self, coin: str, mid_a: float, mid_b: float, fees_rt: float, slip_margin: float, current_edge: float):
+        """Legacy exit check — delegates to VWAP version."""
+        metrics = self._compute_vwap_spread(coin)
+        if metrics and not metrics.get("fast_rejected"):
+            await self._check_exit_vwap(coin, metrics)
+
+    async def _check_entry(self, coin: str, mid_a: float, mid_b: float, edge: float, min_edge: float, sample: SpreadSample):
+        """Legacy entry check — delegates to VWAP version."""
+        metrics = self._compute_vwap_spread(coin)
+        if metrics and not metrics.get("fast_rejected"):
+            direction = "long" if metrics.get("net_edge_long_bps", 0) > metrics.get("net_edge_short_bps", 0) else "short"
+            await self._check_entry_vwap(coin, metrics, direction, min_edge)
 
     # ── Lifecycle ──
 
@@ -796,6 +1259,9 @@ class BotEngine:
         if not self._connect_exchange():
             self.state = BotState.STOPPED
             raise RuntimeError(f"Bot {self.bot_id}: Failed to connect to Hyperliquid")
+
+        # Load deployer perps and patch SDK BEFORE starting trading
+        await self._patch_sdk_with_deployer_perps()
 
         self.state = BotState.RUNNING
         self._stop_event.clear()

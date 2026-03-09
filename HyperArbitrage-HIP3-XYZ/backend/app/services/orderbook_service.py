@@ -93,3 +93,67 @@ class OrderbookService:
             if total >= min_size:
                 return total
         return total
+
+    # ── VWAP helpers (ported from Replit orderbook.js) ──
+
+    def buy_vwap(self, asset: str, notional_usd: Decimal, max_levels: int = 2) -> dict | None:
+        """Walk the ask side consuming liquidity up to notional_usd."""
+        book = self._books.get(asset)
+        if book is None or not book.asks:
+            return None
+
+        filled = Decimal("0")
+        qty = Decimal("0")
+        best_price = book.asks[0].price
+
+        for i, entry in enumerate(book.asks):
+            if i >= max_levels:
+                break
+            level_notional = entry.price * entry.size
+            if filled + level_notional >= notional_usd:
+                remaining = notional_usd - filled
+                partial_qty = remaining / entry.price
+                qty += partial_qty
+                filled = notional_usd
+                break
+            filled += level_notional
+            qty += entry.size
+
+        vwap = filled / qty if qty > 0 else best_price
+        return {
+            "vwap": vwap,
+            "filled": filled,
+            "qty": qty,
+            "bestPrice": best_price,
+        }
+
+    def sell_vwap(self, asset: str, notional_usd: Decimal, max_levels: int = 2) -> dict | None:
+        """Walk the bid side consuming liquidity up to notional_usd."""
+        book = self._books.get(asset)
+        if book is None or not book.bids:
+            return None
+
+        filled = Decimal("0")
+        qty = Decimal("0")
+        best_price = book.bids[0].price
+
+        for i, entry in enumerate(book.bids):
+            if i >= max_levels:
+                break
+            level_notional = entry.price * entry.size
+            if filled + level_notional >= notional_usd:
+                remaining = notional_usd - filled
+                partial_qty = remaining / entry.price
+                qty += partial_qty
+                filled = notional_usd
+                break
+            filled += level_notional
+            qty += entry.size
+
+        vwap = filled / qty if qty > 0 else best_price
+        return {
+            "vwap": vwap,
+            "filled": filled,
+            "qty": qty,
+            "bestPrice": best_price,
+        }

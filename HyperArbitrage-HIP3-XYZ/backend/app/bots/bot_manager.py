@@ -9,6 +9,7 @@ from app.config import settings
 from app.core.logging import get_logger
 from app.core.security import decrypt_api_key
 from app.models.bot import Bot, BotConfig
+from app.services.deployer_perps import DeployerRegistry, load_deployer_perps, patch_sdk
 
 logger = get_logger("bots.bot_manager")
 
@@ -31,7 +32,7 @@ def _create_hl_info(is_mainnet: bool):
         from hyperliquid.info import Info
         from hyperliquid.utils import constants
         base_url = constants.MAINNET_API_URL if is_mainnet else constants.TESTNET_API_URL
-        return Info(base_url=base_url)
+        return Info(base_url=base_url, skip_ws=True)
     except ImportError:
         logger.warning("hyperliquid_sdk_not_available", msg="Using None info — install hyperliquid-python-sdk")
         return None
@@ -41,6 +42,28 @@ class BotManager:
     def __init__(self) -> None:
         self._bots: dict[int, BotInstance] = {}
         self._lock = asyncio.Lock()
+        self._deployer_registry: DeployerRegistry | None = None
+
+    async def load_deployer_registry(self) -> None:
+        """Load deployer perps registry and make it available for SDK patching."""
+        try:
+            self._deployer_registry = await load_deployer_perps()
+            logger.info(
+                "deployer_registry_loaded",
+                asset_count=len(self._deployer_registry.assets),
+            )
+        except Exception as exc:
+            logger.error("deployer_registry_load_failed", error=str(exc))
+
+    def _patch_exchange_sdk(self, exchange, hl_info) -> None:
+        """Patch a Hyperliquid SDK instance with deployer perp indices."""
+        if self._deployer_registry is None:
+            return
+        # Patch the Info instance used by Exchange for name resolution
+        if exchange and hasattr(exchange, 'info'):
+            patch_sdk(exchange.info, self._deployer_registry)
+        elif hl_info:
+            patch_sdk(hl_info, self._deployer_registry)
 
     @property
     def bots(self) -> dict[int, BotInstance]:
@@ -76,6 +99,9 @@ class BotManager:
             api_key_decrypted = decrypt_api_key(bot_model.api_key_encrypted)
             exchange = _create_hl_exchange(api_key_decrypted, is_mainnet)
             hl_info = _create_hl_info(is_mainnet)
+
+            # Patch SDK with deployer perp indices so HiP-3 orders work
+            self._patch_exchange_sdk(exchange, hl_info)
 
             instance = BotInstance(
                 bot_id=bot_model.id,
