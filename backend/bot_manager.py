@@ -293,6 +293,7 @@ class BotManager:
                 "fees_bps": 0.45,
                 "metrics": engine.metrics.to_dict() if engine else BotMetrics().to_dict(),
                 "config": self._engine_config_to_dashboard(engine.config) if engine else BotConfig().to_dict(),
+                "api_key_masked": ("..." + engine.api_key[-4:]) if engine and engine.api_key and len(engine.api_key) > 4 else "",
                 "pairs": EXCHANGE_PAIRS.get(defn["exchange"], []),
                 "tiers_enabled": True,
             }

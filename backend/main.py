@@ -166,6 +166,23 @@ async def update_config(bot_id: int, body: dict):
         return {"error": str(e)}
 
 
+# ── PATCH /api/v1/bots/{bot_id}/credentials — update bot credentials from UI ──
+@app.patch("/api/v1/bots/{bot_id}/credentials")
+async def update_credentials(bot_id: int, body: dict):
+    bot = manager._bots.get(bot_id)
+    if not bot:
+        return {"error": f"Bot {bot_id} not found"}
+
+    if body.get("api_key"):
+        bot.api_key = body["api_key"]
+    if body.get("account_address"):
+        bot.account_address = body["account_address"]
+    if "sub_account" in body:
+        bot.sub_account = body["sub_account"] or None
+
+    return {"ok": True, "bot_id": bot_id}
+
+
 # ── GET /api/v1/bots/{bot_id}/trades — trade history ──
 @app.get("/api/v1/bots/{bot_id}/trades")
 async def get_trades(bot_id: int, limit: int = 50, offset: int = 0):
