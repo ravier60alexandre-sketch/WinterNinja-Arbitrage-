@@ -1504,7 +1504,8 @@ class BotEngine:
         close_reason = ""
 
         if self.config.exit_mode == "on_profit":
-            threshold = fee_usd + (self.config.close_buffer_bps / 10000 * mid_ref * total_size)
+            # net_pnl already has fees deducted, so threshold is just the buffer
+            threshold = self.config.close_buffer_bps / 10000 * mid_ref * total_size
             if net_pnl > threshold:
                 should_exit = True
                 close_reason = "on_profit"
@@ -1578,8 +1579,8 @@ class BotEngine:
                     "entry_price_a": entry_a,
                     "entry_price_b": entry_b,
                     "exit_time": datetime.now(timezone.utc).isoformat(),
-                    "exit_price_a": mid_a,
-                    "exit_price_b": mid_b,
+                    "exit_price_a": result_a.price if result_a else mid_a,
+                    "exit_price_b": result_b.price if result_b else mid_b,
                     "pnl": net_pnl,
                     "fees": fee_usd,
                     "close_reason": close_reason,
@@ -1611,8 +1612,8 @@ class BotEngine:
                     "coin": coin,
                     "exit_size": exit_size,
                     "remaining_size": remaining_size,
-                    "exit_price_a": mid_a,
-                    "exit_price_b": mid_b,
+                    "exit_price_a": result_a.price if result_a else mid_a,
+                    "exit_price_b": result_b.price if result_b else mid_b,
                     "pnl": partial_pnl,
                     "fees": partial_fee,
                     "close_reason": close_reason,
@@ -1714,6 +1715,24 @@ class BotEngine:
                     mid_b = mid_b or pos["avg_entry_b"]
 
                     await self._execute_pair_order(coin, exit_side_a, exit_side_b, pos["total_size"], mid_a, mid_b)
+
+                    # Persist liquidation close to database
+                    if self.on_trade_callback:
+                        self.on_trade_callback("close", self.bot_id, {
+                            "coin": coin,
+                            "direction": pos.get("direction", "long"),
+                            "side_a": pos["side_a"],
+                            "side_b": pos["side_b"],
+                            "size": pos["total_size"],
+                            "entry_price_a": pos["avg_entry_a"],
+                            "entry_price_b": pos["avg_entry_b"],
+                            "exit_time": datetime.now(timezone.utc).isoformat(),
+                            "exit_price_a": mid_a,
+                            "exit_price_b": mid_b,
+                            "pnl": 0,
+                            "fees": 0,
+                            "close_reason": "liquidation",
+                        })
                 except Exception as e:
                     logger.error(f"[Bot {self.bot_id}] Liquidation error on {coin}: {e}")
             self._open_trades.clear()
