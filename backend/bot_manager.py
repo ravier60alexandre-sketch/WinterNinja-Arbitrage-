@@ -46,6 +46,7 @@ class BotManager:
         self._db_path = db_path
         self._bots: dict[int, BotEngine] = {}
         self._definitions: list[dict] = []
+        self._bot_pairs: dict[int, list[dict]] = {}  # per-bot pair state with enabled flags
 
     def _db(self) -> sqlite3.Connection:
         return sqlite3.connect(str(self._db_path))
@@ -127,10 +128,27 @@ class BotManager:
                 on_trade_callback=self._on_trade,
             )
 
-            # Set enabled pairs from exchange config
+            # Set enabled pairs from exchange config, merging with persisted state
             exchange = defn.get("exchange", "")
             exchange_pairs = EXCHANGE_PAIRS.get(exchange, [])
-            enabled_symbols = [p["symbol"] for p in exchange_pairs if p.get("enabled", True)]
+
+            # Load persisted pair states (if any)
+            saved_pairs = self._load_pairs(bot_id)
+            if saved_pairs:
+                # Merge: use saved enabled state, but keep default list as base
+                saved_map = {p["symbol"]: p for p in saved_pairs}
+                merged = []
+                for ep in exchange_pairs:
+                    sp = saved_map.get(ep["symbol"])
+                    merged.append({
+                        **ep,
+                        "enabled": sp["enabled"] if sp else ep.get("enabled", True),
+                    })
+                self._bot_pairs[bot_id] = merged
+            else:
+                self._bot_pairs[bot_id] = [dict(p) for p in exchange_pairs]
+
+            enabled_symbols = [p["symbol"] for p in self._bot_pairs[bot_id] if p.get("enabled", True)]
             engine.set_enabled_pairs(enabled_symbols)
 
             # Load persisted metrics
@@ -142,6 +160,26 @@ class BotManager:
 
             has_creds = bool(account and api_key)
             logger.info(f"Bot {bot_id} ({defn['name']}) loaded — credentials={'YES' if has_creds else 'MISSING'} — {len(enabled_symbols)} pairs")
+
+    def _load_pairs(self, bot_id: int) -> list[dict] | None:
+        """Load persisted pair states from SQLite."""
+        try:
+            conn = self._db()
+            row = conn.execute(
+                "SELECT config_json FROM bot_state WHERE bot_id = ?", (bot_id,)
+            ).fetchone()
+            conn.close()
+            if row and row[0]:
+                data = json.loads(row[0])
+                if isinstance(data, dict) and "pairs" in data:
+                    return data["pairs"]
+        except Exception:
+            pass
+        return None
+
+    def _save_pairs(self, bot_id: int):
+        """Save pair states alongside config in bot_state."""
+        self._save_state(bot_id)
 
     def _load_config(self, bot_id: int) -> BotConfig:
         try:
@@ -179,6 +217,11 @@ class BotManager:
         if not bot:
             return
         try:
+            # Include pairs in config_json for persistence
+            config_data = bot.config.to_dict()
+            if bot_id in self._bot_pairs:
+                config_data["pairs"] = self._bot_pairs[bot_id]
+
             conn = self._db()
             conn.execute(
                 """INSERT INTO bot_state (bot_id, state, config_json, metrics_json, updated_at)
@@ -191,7 +234,7 @@ class BotManager:
                 (
                     bot_id,
                     bot.state.value,
-                    json.dumps(bot.config.to_dict()),
+                    json.dumps(config_data),
                     json.dumps(bot.metrics.to_dict()),
                 ),
             )
@@ -389,6 +432,18 @@ class BotManager:
 
         self._save_state(bot_id)
 
+    def update_pairs(self, bot_id: int, pairs: list[dict]):
+        """Update pair enabled/disabled state for a bot."""
+        bot = self._bots.get(bot_id)
+        if not bot:
+            raise ValueError(f"Bot {bot_id} not found")
+
+        self._bot_pairs[bot_id] = pairs
+        enabled_symbols = [p["symbol"] for p in pairs if p.get("enabled", True)]
+        bot.set_enabled_pairs(enabled_symbols)
+        self._save_state(bot_id)
+        logger.info(f"Bot {bot_id} pairs updated: {len(enabled_symbols)}/{len(pairs)} enabled")
+
     def get_trades(self, bot_id: int, limit: int = 50, offset: int = 0) -> list[dict]:
         try:
             conn = self._db()
@@ -427,7 +482,7 @@ class BotManager:
                 "metrics": engine.metrics.to_dict() if engine else BotMetrics().to_dict(),
                 "config": self._engine_config_to_dashboard(engine.config) if engine else BotConfig().to_dict(),
                 "api_key_masked": ("..." + engine.api_key[-4:]) if engine and engine.api_key and len(engine.api_key) > 4 else "",
-                "pairs": EXCHANGE_PAIRS.get(defn["exchange"], []),
+                "pairs": self._bot_pairs.get(bot_id, EXCHANGE_PAIRS.get(defn["exchange"], [])),
                 "tiers_enabled": True,
                 "open_trades": engine.get_open_trades_view() if engine else [],
             }

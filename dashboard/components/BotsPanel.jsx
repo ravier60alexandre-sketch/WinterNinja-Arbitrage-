@@ -34,7 +34,7 @@ function interpPercentile(stats, pct, dir) {
 const DEFAULT_METRICS = {
   pnl_net: 0, fees: 0, volume: 0, open: 0, closed: 0,
   win_pct: null, wins: 0, losses: 0, slip_avg_bps: 0,
-  errors: 0, orphans: 0, funding: 0,
+  errors: 0, orphans: 0, orphan_losses: 0, funding: 0,
 };
 const DEFAULT_CONFIG = {
   size: 0, max_pos: 300, max_global: 1000, max_lev: 10, sl_bps: 0,
@@ -468,7 +468,8 @@ function BotColumn({ bot, spreadStats, onAction, onConfigUpdate, onWalletSet, on
           <MetricBox label="LOSSES" value={bot.metrics?.losses || 0} />
           <MetricBox label="SLIP AVG" value={`${(bot.metrics?.slip_avg_bps || 0).toFixed(2)} bps`} />
           <MetricBox label="ERRORS" value={bot.metrics?.errors || 0} valueColor="text-accent-red" />
-          <MetricBox label="ORPHANS" value={fmtUsd(bot.metrics?.orphans || 0)} valueColor="text-accent-green" />
+          <MetricBox label="ORPHANS" value={bot.metrics?.orphans || 0} valueColor="text-gray-200" />
+          <MetricBox label="ORPHAN LOSS" value={fmtUsd(-(bot.metrics?.orphan_losses || 0))} valueColor={bot.metrics?.orphan_losses > 0 ? 'text-accent-red' : 'text-gray-400'} />
           <MetricBox label="FUNDING" value={fmtUsd(bot.metrics?.funding || 0)} valueColor="text-accent-green" />
         </div>
       </div>

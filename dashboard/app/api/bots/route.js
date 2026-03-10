@@ -66,7 +66,7 @@ function initDefaultBots() {
     metrics: {
       pnl_net: 0, fees: 0, volume: 0, open: 0, closed: 0,
       win_pct: null, wins: 0, losses: 0, slip_avg_bps: 0,
-      errors: 0, orphans: 0, funding: 0,
+      errors: 0, orphans: 0, orphan_losses: 0, funding: 0,
     },
     config: {
       size: 0, max_pos: 300, max_global: 1000, max_lev: 10, sl_bps: 0,
@@ -195,7 +195,7 @@ export async function POST(request) {
       bot.metrics = {
         pnl_net: 0, fees: 0, volume: 0, open: 0, closed: 0,
         win_pct: null, wins: 0, losses: 0, slip_avg_bps: 0,
-        errors: 0, orphans: 0, funding: 0,
+        errors: 0, orphans: 0, orphan_losses: 0, funding: 0,
       };
     }
     saveBots(data);
@@ -231,6 +231,14 @@ export async function PUT(request) {
         account_address: body.wallet,
         sub_account: body.sub_account,
       }) }
+    );
+  }
+
+  // Forward pair toggles to FastAPI backend (so BotEngine updates _enabled_pairs)
+  if (body.pairs) {
+    await fetchFromBackend(
+      `/api/v1/bots/${bot_id}/pairs`,
+      { method: 'PATCH', body: JSON.stringify({ pairs: body.pairs }) }
     );
   }
 

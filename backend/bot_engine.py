@@ -120,6 +120,7 @@ class BotMetrics:
     slip_avg_bps: float = 0.0
     errors: int = 0
     orphans: int = 0
+    orphan_losses: float = 0.0
     funding: float = 0.0
     _slippage_sum: float = 0.0
     _slippage_count: int = 0
@@ -128,6 +129,11 @@ class BotMetrics:
         self._slippage_sum += abs(slip_a) + abs(slip_b)
         self._slippage_count += 2
         self.slip_avg_bps = self._slippage_sum / self._slippage_count if self._slippage_count else 0
+
+    def record_orphan_loss(self, loss: float):
+        """Record an orphan unwind loss (loss should be positive = amount lost)."""
+        self.orphan_losses += loss
+        self.pnl_net -= loss
 
     def record_trade_close(self, pnl: float, fees: float, volume: float):
         self.closed += 1
@@ -155,6 +161,7 @@ class BotMetrics:
             "slip_avg_bps": round(self.slip_avg_bps, 2),
             "errors": self.errors,
             "orphans": self.orphans,
+            "orphan_losses": round(self.orphan_losses, 6),
             "funding": round(self.funding, 6),
         }
 
@@ -992,7 +999,8 @@ class BotEngine:
     # ── Order Execution ──
 
     async def _execute_pair_order(
-        self, coin: str, side_a: str, side_b: str, size: float, mid_a: float, mid_b: float
+        self, coin: str, side_a: str, side_b: str, size: float, mid_a: float, mid_b: float,
+        reduce_only: bool = False,
     ) -> tuple[OrderResult | None, OrderResult | None]:
         """Execute two orders simultaneously via bulk order.
 
@@ -1061,7 +1069,7 @@ class BotEngine:
                     "sz": rounded_size_a,
                     "limit_px": round_price_sig(price_a),
                     "order_type": {"limit": {"tif": "Ioc"}},
-                    "reduce_only": False,
+                    "reduce_only": reduce_only,
                 }
                 order_spec_b = {
                     "coin": sym_b,
@@ -1069,7 +1077,7 @@ class BotEngine:
                     "sz": rounded_size_b,
                     "limit_px": round_price_sig(price_b),
                     "order_type": {"limit": {"tif": "Ioc"}},
-                    "reduce_only": False,
+                    "reduce_only": reduce_only,
                 }
 
                 logger.info(
@@ -1196,7 +1204,23 @@ class BotEngine:
                 )
                 statuses = result.get("response", {}).get("data", {}).get("statuses", [])
                 if statuses and "filled" in statuses[0]:
-                    logger.info(f"[Bot {self.bot_id}] One-leg unwound at {slip*100:.1f}% slippage")
+                    # Calculate actual loss from the unwind
+                    fill_info = statuses[0]["filled"]
+                    unwind_avg_px = float(fill_info.get("avgPx", unwind_price))
+                    if close_side == "sell":
+                        orphan_loss = (filled_result.price - unwind_avg_px) * unwind_size
+                    else:
+                        orphan_loss = (unwind_avg_px - filled_result.price) * unwind_size
+                    orphan_loss = max(0, orphan_loss)  # only record actual losses
+                    # Add fees for both entry and unwind
+                    fee_bps = self._get_fee_bps(filled_sym.split(":")[0])
+                    orphan_fee = fee_bps / 10000 * filled_result.price * unwind_size * 2
+                    orphan_loss += orphan_fee
+                    self.metrics.record_orphan_loss(orphan_loss)
+                    logger.info(
+                        f"[Bot {self.bot_id}] One-leg unwound at {slip*100:.1f}% slippage — "
+                        f"loss=${orphan_loss:.4f} (slippage + fees)"
+                    )
                     # Apply post-orphan cooldown to prevent immediate re-entry
                     self._last_order_attempt = time.time() + 10.0  # 15s total cooldown
                     return False
@@ -1596,10 +1620,81 @@ class BotEngine:
         if exit_size <= 0:
             return
 
-        result_a, result_b = await self._execute_pair_order(coin, exit_side_a, exit_side_b, exit_size, mid_a, mid_b)
+        result_a, result_b = await self._execute_pair_order(
+            coin, exit_side_a, exit_side_b, exit_size, mid_a, mid_b, reduce_only=True
+        )
 
         if result_a is None or result_b is None:
             logger.warning(f"[Bot {self.bot_id}] Exit order failed on {coin}, position still open")
+            return
+
+        # One-leg protection on close: if only one leg filled, unwind it
+        if result_a.filled != result_b.filled:
+            logger.warning(
+                f"[Bot {self.bot_id}] ONE-LEG on CLOSE for {coin}! A={result_a.filled}, B={result_b.filled}"
+            )
+            filled_result = result_a if result_a.filled else result_b
+            filled_sym = self._hip3_symbol(self._prefix_a, coin) if result_a.filled else self._hip3_symbol(self._prefix_b, coin)
+            revert_side = "sell" if filled_result.side == "buy" else "buy"
+
+            # Try to revert the filled close leg to restore the original position
+            unwind_slippages = [0.003, 0.0075, 0.015, 0.025]
+            reverted = False
+            for i, slip in enumerate(unwind_slippages):
+                try:
+                    if not self._exchange:
+                        break
+                    book = self._books.get(filled_sym, {})
+                    if revert_side == "buy" and book.get("asks"):
+                        base_price = book["asks"][0][0]
+                    elif revert_side == "sell" and book.get("bids"):
+                        base_price = book["bids"][0][0]
+                    else:
+                        base_price = filled_result.price
+
+                    revert_price = base_price * (1 + slip) if revert_side == "buy" else base_price * (1 - slip)
+                    sz_dec = self._get_sz_decimals(filled_sym)
+                    revert_size = round_size(filled_result.size, sz_dec)
+
+                    result = self._exchange.order(
+                        filled_sym, revert_side == "buy", revert_size, round_price_sig(revert_price),
+                        {"limit": {"tif": "Ioc"}},
+                    )
+                    statuses = result.get("response", {}).get("data", {}).get("statuses", [])
+                    if statuses and "filled" in statuses[0]:
+                        # Calculate the loss from the round-trip
+                        fill_info = statuses[0]["filled"]
+                        revert_avg_px = float(fill_info.get("avgPx", revert_price))
+                        if revert_side == "buy":
+                            close_loss = (revert_avg_px - filled_result.price) * revert_size
+                        else:
+                            close_loss = (filled_result.price - revert_avg_px) * revert_size
+                        close_loss = max(0, close_loss)
+                        fee_bps = self._get_fee_bps(filled_sym.split(":")[0])
+                        close_loss += fee_bps / 10000 * filled_result.price * revert_size * 2
+                        self.metrics.record_orphan_loss(close_loss)
+                        self.metrics.orphans += 1
+                        logger.info(
+                            f"[Bot {self.bot_id}] Close one-leg reverted at {slip*100:.1f}% slip — "
+                            f"loss=${close_loss:.4f}, position remains open"
+                        )
+                        reverted = True
+                        break
+                except Exception as e:
+                    logger.warning(f"[Bot {self.bot_id}] Close revert attempt {i+1} failed: {e}")
+                if i < len(unwind_slippages) - 1:
+                    await asyncio.sleep(1.0)
+
+            if not reverted:
+                logger.error(
+                    f"[Bot {self.bot_id}] CLOSE ONE-LEG STUCK on {coin} — "
+                    f"one leg closed but revert failed. Manual intervention needed!"
+                )
+                self.metrics.errors += 1
+            return  # Don't update position state — either reverted or stuck
+
+        # Both legs unfilled — no change
+        if not result_a.filled and not result_b.filled:
             return
 
         # Calculate PnL proportional to exit size

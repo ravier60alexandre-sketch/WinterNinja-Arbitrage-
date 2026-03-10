@@ -221,6 +221,17 @@ async def update_credentials(bot_id: int, body: dict):
     return {"ok": True, "bot_id": bot_id}
 
 
+# ── PATCH /api/v1/bots/{bot_id}/pairs — update pair toggles ──
+@app.patch("/api/v1/bots/{bot_id}/pairs")
+async def update_pairs(bot_id: int, body: dict):
+    try:
+        pairs = body.get("pairs", [])
+        manager.update_pairs(bot_id, pairs)
+        return {"ok": True, "bot_id": bot_id}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # ── GET /api/v1/bots/{bot_id}/trades — trade history ──
 @app.get("/api/v1/bots/{bot_id}/trades")
 async def get_trades(bot_id: int, limit: int = 50, offset: int = 0):
