@@ -45,7 +45,7 @@ DEFAULT_FEE_BPS = Decimal(str(GROWTH_TAKER_FEE * 10000))  # in bps per leg
 NOTIONAL_SIZES = [25, 50, 100]
 
 # Max orderbook levels to consume for VWAP
-MAX_LEVELS_TO_CONSUME = 2
+MAX_LEVELS_TO_CONSUME = 5
 
 # Map deployer labels to HiP-3 prefix (lowercase)
 DEPLOYER_PREFIX = {
@@ -455,6 +455,7 @@ class BotEngine:
 
         # Orderbook state — per HiP-3 symbol (e.g., "xyz:SILVER")
         self._books: dict[str, dict] = {}
+        self._book_ts: dict[str, float] = {}  # last update timestamp per symbol
 
         # Open position tracking — multiple simultaneous positions keyed by coin
         # Each value is a dict with fills[], total_size, avg_entry_a/b, etc.
@@ -842,6 +843,7 @@ class BotEngine:
                                     "asks": [(float(l["px"]), float(l["sz"])) for l in levels[1][:10]],
                                 }
                                 self._books[coin] = book
+                                self._book_ts[coin] = now
                                 self._last_ws_data = now
                                 self._books_received += 1
                         except Exception as e:
@@ -1004,6 +1006,18 @@ class BotEngine:
 
         sym_a = self._hip3_symbol(self._prefix_a, coin)
         sym_b = self._hip3_symbol(self._prefix_b, coin)
+
+        # ── Book freshness guard: reject if either book is stale (>2s old) ──
+        now = time.time()
+        max_book_age = 2.0  # seconds
+        age_a = now - self._book_ts.get(sym_a, 0)
+        age_b = now - self._book_ts.get(sym_b, 0)
+        if age_a > max_book_age or age_b > max_book_age:
+            logger.warning(
+                f"[Bot {self.bot_id}] Stale book for {coin} — "
+                f"{sym_a} age={age_a:.1f}s, {sym_b} age={age_b:.1f}s. Skipping order."
+            )
+            return None, None
 
         # Get dynamic szDecimals from registry
         sz_dec_a = self._get_sz_decimals(sym_a)
@@ -1377,6 +1391,11 @@ class BotEngine:
             top_sz_b = book_b.get("bids", [(0, 0)])[0][1] if book_b.get("bids") else 0
 
         size = min(top_sz_a, top_sz_b)
+
+        # Only take 70% of top-of-book liquidity to reduce one-leg risk.
+        # On illiquid HiP-3 markets, trying to fill 100% of visible liquidity
+        # often races with other participants, causing IOC misses.
+        size *= 0.7
 
         # Cap by max_position_size (account for existing position size)
         mid_ref = metrics["mid_ref"]
