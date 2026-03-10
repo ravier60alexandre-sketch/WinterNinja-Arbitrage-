@@ -614,7 +614,7 @@ class BotEngine:
         return result
 
     async def _fetch_balances(self):
-        """Fetch USDC/USDH balances from Hyperliquid clearinghouseState API."""
+        """Fetch USDC/USDH balances from Hyperliquid (perp + spot clearinghouseState)."""
         if not self.account_address:
             return
 
@@ -622,33 +622,52 @@ class BotEngine:
 
         try:
             import aiohttp
+            usdc = 0.0
+            usdh = 0.0
+
             async with aiohttp.ClientSession() as session:
+                # 1) Perp clearinghouseState — margin / multi-collateral balances
                 async with session.post(
                     "https://api.hyperliquid.xyz/info",
                     json={"type": "clearinghouseState", "user": trading_address},
                 ) as resp:
                     resp.raise_for_status()
-                    data = await resp.json()
+                    perp_data = await resp.json()
 
-            margin = data.get("marginSummary", data.get("crossMarginSummary", {}))
-            account_value = float(margin.get("accountValue", 0))
+                margin = perp_data.get("marginSummary", perp_data.get("crossMarginSummary", {}))
+                account_value = float(margin.get("accountValue", 0))
 
-            # Check for multi-collateral balances (USDC + USDH)
-            balances = data.get("balances", [])
-            usdc = 0.0
-            usdh = 0.0
-            for b in balances:
-                token = b.get("coin", "").upper()
-                hold = float(b.get("hold", 0))
-                total_bal = float(b.get("total", 0))
-                if token == "USDC":
-                    usdc = total_bal
-                elif token in ("USDH", "USD"):
-                    usdh = total_bal
+                for b in perp_data.get("balances", []):
+                    token = b.get("coin", "").upper()
+                    total_bal = float(b.get("total", 0))
+                    if token == "USDC":
+                        usdc += total_bal
+                    elif token in ("USDH", "USD"):
+                        usdh += total_bal
 
-            # If no multi-collateral breakdown, use accountValue as USDC
-            if usdc == 0 and usdh == 0 and account_value > 0:
-                usdc = account_value
+                # Fallback: single-collateral accounts report everything as accountValue
+                if usdc == 0 and usdh == 0 and account_value > 0:
+                    usdc = account_value
+
+                # 2) Spot clearinghouseState — spot stablecoins (USDC, USDT, etc.)
+                async with session.post(
+                    "https://api.hyperliquid.xyz/info",
+                    json={"type": "spotClearinghouseState", "user": trading_address},
+                ) as resp2:
+                    resp2.raise_for_status()
+                    spot_data = await resp2.json()
+
+                for b in spot_data.get("balances", []):
+                    token = b.get("coin", "").upper()
+                    total_bal = float(b.get("total", 0))
+                    hold = float(b.get("hold", 0))
+                    available = total_bal
+                    if token == "USDC":
+                        usdc += available
+                    elif token in ("USDT",):
+                        usdh += available  # show USDT alongside USDH for visibility
+                    elif token in ("USDH", "USD"):
+                        usdh += available
 
             self._collateral = {
                 "usdc": round(usdc, 2),
@@ -656,9 +675,10 @@ class BotEngine:
                 "total": round(usdc + usdh, 2),
             }
             self._last_balance_fetch = time.time()
+            logger.info(f"[Bot {self.bot_id}] Balances: USDC={usdc:.2f} USDH={usdh:.2f} (addr={trading_address[:10]}...)")
 
         except Exception as e:
-            logger.debug(f"[Bot {self.bot_id}] Balance fetch error: {e}")
+            logger.warning(f"[Bot {self.bot_id}] Balance fetch error: {e}")
 
     async def _balance_loop(self):
         """Periodically refresh account balances (every 30s)."""

@@ -563,34 +563,6 @@ function BotColumn({ bot, spreadStats, onAction, onConfigUpdate, onWalletSet, on
           </div>
         </div>
 
-        {/* Close */}
-        <div className="mb-4">
-          <div className="text-[10px] text-gray-600 uppercase tracking-wider font-semibold mb-2">Close</div>
-          <div className="flex items-center gap-3 mb-2">
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={localConfig?.zmr || false}
-                onChange={e => updateLocal('zmr', e.target.checked)}
-                className="w-3.5 h-3.5 rounded border-bg-border accent-accent-blue"
-              />
-              <span className="text-[10px] text-gray-200 font-semibold">ZMR</span>
-            </label>
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={localConfig?.close_fee_rt_buffer || false}
-                onChange={e => updateLocal('close_fee_rt_buffer', e.target.checked)}
-                className="w-3.5 h-3.5 rounded border-bg-border accent-accent-blue"
-              />
-              <span className="text-[10px] text-gray-200">Close = feeRT + buffer</span>
-            </label>
-          </div>
-          <div className="flex gap-3">
-            <ConfigInput label="Buffer (bps)" value={localConfig?.close_buffer_bps} onChange={v => updateLocal('close_buffer_bps', parseFloat(v))} />
-          </div>
-          <div className="text-[9px] text-gray-600 mt-1">Ferme au fur et à mesure de la liquidité si PnL &gt; feeRT + buffer.</div>
-        </div>
 
         {/* Apply button */}
         <button

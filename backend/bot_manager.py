@@ -501,8 +501,6 @@ class BotManager:
             "slip": config.max_slippage_bps,
             "timer": config.timeframe,
             "close_buffer_bps": config.close_buffer_bps,
-            "zmr": False,
-            "close_fee_rt_buffer": False,
         }
 
     async def refresh_balances(self):
