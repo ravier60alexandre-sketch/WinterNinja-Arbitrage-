@@ -69,9 +69,9 @@ function initDefaultBots() {
       errors: 0, orphans: 0, funding: 0,
     },
     config: {
-      max_pos: 300, max_global: 1000, max_lev: 10, sl_bps: 0,
+      size: 0, max_pos: 300, max_global: 1000, max_lev: 10, sl_bps: 0,
       max_loss_bps: 500, percentile: 0.75, buf: 0, slip: 2,
-      timer: '6h', close_buffer_bps: 2, zmr: false, close_fee_rt_buffer: false,
+      timer: '6h', close_buffer_bps: 0, zmr: false, close_fee_rt_buffer: false,
     },
     pairs: getDefaultPairs(d.pair_b),
     tiers_enabled: true,

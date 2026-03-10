@@ -37,9 +37,9 @@ const DEFAULT_METRICS = {
   errors: 0, orphans: 0, funding: 0,
 };
 const DEFAULT_CONFIG = {
-  max_pos: 300, max_global: 1000, max_lev: 10, sl_bps: 0,
+  size: 0, max_pos: 300, max_global: 1000, max_lev: 10, sl_bps: 0,
   max_loss_bps: 500, percentile: 0.75, buf: 0, slip: 2,
-  timer: '6h', close_buffer_bps: 2, zmr: false, close_fee_rt_buffer: false,
+  timer: '6h', close_buffer_bps: 0, zmr: false, close_fee_rt_buffer: false,
 };
 const DEFAULT_BOTS = [
   { id: 1, name: 'Long XYZ / Short CASH', exchange: 'CASH', pair_b: 'cash', direction: 'long' },
@@ -487,9 +487,11 @@ function BotColumn({ bot, spreadStats, onAction, onConfigUpdate, onWalletSet, on
         <div className="mb-4">
           <div className="text-[10px] text-gray-600 uppercase tracking-wider font-semibold mb-2">Position Sizing</div>
           <div className="flex gap-3">
+            <ConfigInput label="Size ($)" value={localConfig?.size} onChange={v => updateLocal('size', parseFloat(v))} />
             <ConfigInput label="Max Pos ($)" value={localConfig?.max_pos} onChange={v => updateLocal('max_pos', parseFloat(v))} />
             <ConfigInput label="Max Global" value={localConfig?.max_global} onChange={v => updateLocal('max_global', parseFloat(v))} />
           </div>
+          <div className="text-[9px] text-gray-600 mt-1">Taille identique sur les 2 legs, pas d'arrondi.</div>
         </div>
 
         {/* Risk */}
@@ -560,11 +562,10 @@ function BotColumn({ bot, spreadStats, onAction, onConfigUpdate, onWalletSet, on
           </div>
         </div>
 
-        {/* Close (BE-Based) */}
+        {/* Close */}
         <div className="mb-4">
-          <div className="text-[10px] text-gray-600 uppercase tracking-wider font-semibold mb-2">Close (BE-Based)</div>
-          <div className="flex items-center gap-3">
-            <ConfigInput label="Buffer" value={localConfig?.close_buffer_bps} onChange={v => updateLocal('close_buffer_bps', parseFloat(v))} suffix="bps" />
+          <div className="text-[10px] text-gray-600 uppercase tracking-wider font-semibold mb-2">Close</div>
+          <div className="flex items-center gap-3 mb-2">
             <label className="flex items-center gap-1.5 cursor-pointer">
               <input
                 type="checkbox"
@@ -584,6 +585,10 @@ function BotColumn({ bot, spreadStats, onAction, onConfigUpdate, onWalletSet, on
               <span className="text-[10px] text-gray-200">Close = feeRT + buffer</span>
             </label>
           </div>
+          <div className="flex gap-3">
+            <ConfigInput label="Buffer (bps)" value={localConfig?.close_buffer_bps} onChange={v => updateLocal('close_buffer_bps', parseFloat(v))} />
+          </div>
+          <div className="text-[9px] text-gray-600 mt-1">Ferme au fur et à mesure de la liquidité si PnL &gt; feeRT + buffer.</div>
         </div>
 
         {/* Apply button */}
