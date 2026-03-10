@@ -75,6 +75,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             bot_id INTEGER NOT NULL,
             status TEXT NOT NULL DEFAULT 'open',
+            coin TEXT,
             direction TEXT,
             pair_a TEXT,
             pair_b TEXT,
@@ -99,6 +100,26 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now'))
         )
     """)
+    # Sub-entries table for position accumulation (multiple fills per trade)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS fills (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trade_id INTEGER NOT NULL REFERENCES trades(id),
+            size REAL NOT NULL,
+            entry_price_a REAL,
+            entry_price_b REAL,
+            slippage_a REAL,
+            slippage_b REAL,
+            edge_at_entry REAL,
+            entry_time TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    # Migration: add coin column to existing trades table if missing
+    try:
+        conn.execute("SELECT coin FROM trades LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE trades ADD COLUMN coin TEXT")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS bot_state (
             bot_id INTEGER PRIMARY KEY,
@@ -264,7 +285,7 @@ async def bot_diagnostics(bot_id: int):
         "best_edge_seen": round(bot._best_edge_seen, 2),
         "best_edge_coin": bot._best_edge_coin,
         "min_edge_bps": bot.config.min_edge_bps,
-        "has_position": bot._has_position,
+        "has_position": len(bot._open_trades) > 0,
         "samples_per_coin": {coin: len(bot._samples.get(coin, [])) for coin in bot._enabled_pairs},
         "books": books_info,
     }

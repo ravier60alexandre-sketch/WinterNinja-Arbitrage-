@@ -453,7 +453,8 @@ class BotEngine:
         self._books: dict[str, dict] = {}
 
         # Open position tracking — multiple simultaneous positions keyed by coin
-        self._open_trades: dict[str, dict] = {}  # coin -> trade dict
+        # Each value is a dict with fills[], total_size, avg_entry_a/b, etc.
+        self._open_trades: dict[str, dict] = {}  # coin -> position dict with fills
 
         # Funding state — per coin
         self._funding_blocked_coins: set[str] = set()
@@ -518,6 +519,87 @@ class BotEngine:
     def collateral(self) -> dict:
         """Return the latest collateral/balance snapshot."""
         return self._collateral
+
+    def get_open_trades_view(self) -> list[dict]:
+        """Return open positions with live unrealized PnL for the dashboard."""
+        result = []
+        for coin, pos in self._open_trades.items():
+            metrics = self._compute_vwap_spread(coin)
+            mid_a = metrics["mid_a"] if metrics and not metrics.get("fast_rejected") else 0
+            mid_b = metrics["mid_b"] if metrics and not metrics.get("fast_rejected") else 0
+            mid_ref = metrics.get("mid_ref", 0) if metrics else 0
+
+            entry_a = pos["avg_entry_a"]
+            entry_b = pos["avg_entry_b"]
+            total_size = pos["total_size"]
+            trade_dir = pos.get("direction", "long")
+
+            # Compute unrealized PnL
+            if mid_a > 0 and mid_b > 0:
+                if trade_dir == "long":
+                    gross_pnl = (mid_a - entry_a) * total_size + (entry_b - mid_b) * total_size
+                else:
+                    gross_pnl = (entry_a - mid_a) * total_size + (mid_b - entry_b) * total_size
+
+                fee_a = self._get_fee_bps(self._prefix_a)
+                fee_b = self._get_fee_bps(self._prefix_b)
+                fee_rt_bps = (fee_a + fee_b) * 2
+                fee_usd = fee_rt_bps / 10000 * mid_ref * total_size if mid_ref > 0 else 0
+                net_pnl = gross_pnl - fee_usd
+            else:
+                gross_pnl = 0
+                net_pnl = 0
+                fee_usd = 0
+
+            # Compute avg slippage across fills
+            fills = pos.get("fills", [])
+            total_slip = sum(abs(f.get("slippage_a", 0)) + abs(f.get("slippage_b", 0)) for f in fills)
+            avg_slip = total_slip / (len(fills) * 2) if fills else 0
+
+            # First fill entry time
+            first_entry = fills[0]["entry_time"] if fills else ""
+            duration_s = 0
+            if first_entry:
+                try:
+                    entry_dt = datetime.fromisoformat(first_entry.replace("Z", "+00:00"))
+                    duration_s = (datetime.now(timezone.utc) - entry_dt).total_seconds()
+                except Exception:
+                    pass
+
+            notional = total_size * mid_ref if mid_ref > 0 else 0
+
+            result.append({
+                "coin": coin,
+                "direction": trade_dir,
+                "side_a": pos["side_a"],
+                "side_b": pos["side_b"],
+                "total_size": round(total_size, 8),
+                "notional_usd": round(notional, 2),
+                "avg_entry_a": round(entry_a, 6),
+                "avg_entry_b": round(entry_b, 6),
+                "current_mid_a": round(mid_a, 6),
+                "current_mid_b": round(mid_b, 6),
+                "unrealized_pnl_gross": round(gross_pnl, 6),
+                "unrealized_pnl_net": round(net_pnl, 6),
+                "fees_est": round(fee_usd, 6),
+                "avg_slippage_bps": round(avg_slip, 2),
+                "entry_time": first_entry,
+                "duration_s": round(duration_s),
+                "num_fills": len(fills),
+                "fills": [
+                    {
+                        "size": round(f["size"], 8),
+                        "entry_price_a": round(f["entry_price_a"], 6),
+                        "entry_price_b": round(f["entry_price_b"], 6),
+                        "slippage_a": round(f.get("slippage_a", 0), 2),
+                        "slippage_b": round(f.get("slippage_b", 0), 2),
+                        "edge_at_entry": round(f.get("edge_at_entry", 0), 2),
+                        "entry_time": f.get("entry_time", ""),
+                    }
+                    for f in fills
+                ],
+            })
+        return result
 
     async def _fetch_balances(self):
         """Fetch USDC/USDH balances from Hyperliquid clearinghouseState API."""
@@ -1165,8 +1247,18 @@ class BotEngine:
                 best_coin = coin
                 best_direction = direction
 
-            # Track eligible entries (not already in position, above threshold)
-            if coin not in self._open_trades and edge >= min_edge:
+            # Track eligible entries (above threshold — allows accumulation on existing positions)
+            if edge >= min_edge:
+                existing = self._open_trades.get(coin)
+                # Skip if already at max position size
+                if existing:
+                    mid_ref = metrics.get("mid_ref", 1)
+                    current_notional = existing["total_size"] * mid_ref if mid_ref > 0 else 0
+                    if current_notional >= self.config.max_position_size:
+                        continue
+                    # Skip if existing position is in opposite direction
+                    if existing["direction"] != direction:
+                        continue
                 eligible_entries.append((coin, metrics, direction, edge))
 
         # ── Periodic diagnostic log (every 30s) ──
@@ -1207,11 +1299,10 @@ class BotEngine:
         # Check entry on ALL eligible coins (sorted by edge, best first)
         eligible_entries.sort(key=lambda x: x[3], reverse=True)
         for coin, coin_metrics, direction, edge in eligible_entries:
-            if coin not in self._open_trades:  # re-check in case entry just opened
-                await self._check_entry_vwap(coin, coin_metrics, direction, min_edge)
+            await self._check_entry_vwap(coin, coin_metrics, direction, min_edge)
 
     async def _check_entry_vwap(self, coin: str, metrics: dict, edge_direction: str, min_edge: float):
-        """Entry check using VWAP metrics (matching Replit arb.js logic)."""
+        """Entry check using VWAP metrics — supports position accumulation via multiple fills."""
         # Cooldown after failed order attempts to prevent spam
         now = time.time()
         if now - self._last_order_attempt < self._order_cooldown_s:
@@ -1236,22 +1327,28 @@ class BotEngine:
 
         # Determine trade direction based on edge
         if edge_direction == "long":
-            # Long A, Short B (buy A at ask, sell B at bid)
             if self.direction == "long_a_short_b":
                 side_a, side_b = "buy", "sell"
             else:
-                return  # Direction mismatch, skip
+                return
         else:
-            # Short A, Long B (sell A at bid, buy B at ask)
             if self.direction == "short_a_long_b":
                 side_a, side_b = "sell", "buy"
             else:
-                return  # Direction mismatch, skip
+                return
 
-        # Size from top-of-book liquidity (matching Replit: min(topSzA, topSzB))
+        # Check accumulation constraints
+        existing = self._open_trades.get(coin)
+        if existing:
+            if existing["direction"] != edge_direction:
+                return  # Can't accumulate opposite direction
+            mid_ref = metrics.get("mid_ref", 1)
+            current_notional = existing["total_size"] * mid_ref if mid_ref > 0 else 0
+            if current_notional >= self.config.max_position_size:
+                return  # Already at max
+
+        # Size from top-of-book liquidity
         book_a, book_b = self._get_books_for_coin(coin)
-        sym_a = self._hip3_symbol(self._prefix_a, coin)
-        sym_b = self._hip3_symbol(self._prefix_b, coin)
 
         if side_a == "buy":
             top_sz_a = book_a.get("asks", [(0, 0)])[0][1] if book_a.get("asks") else 0
@@ -1265,18 +1362,22 @@ class BotEngine:
 
         size = min(top_sz_a, top_sz_b)
 
-        # Cap by max_position_size (in USD, convert to units)
+        # Cap by max_position_size (account for existing position size)
         mid_ref = metrics["mid_ref"]
         if mid_ref > 0:
+            existing_units = existing["total_size"] if existing else 0
             max_units = self.config.max_position_size / mid_ref
-            size = min(size, max_units)
+            remaining_units = max_units - existing_units
+            size = min(size, remaining_units)
 
         if size <= 0:
             return
 
+        is_accumulation = existing is not None
         logger.info(
-            f"[Bot {self.bot_id}] ENTRY SIGNAL {coin} dir={edge_direction} "
+            f"[Bot {self.bot_id}] {'ACCUMULATE' if is_accumulation else 'ENTRY'} SIGNAL {coin} dir={edge_direction} "
             f"net_edge={net_edge:.2f}bps capacity=${capacity:.0f} size={size:.4f}"
+            + (f" (existing={existing['total_size']:.4f})" if is_accumulation else "")
         )
 
         self._last_order_attempt = time.time()
@@ -1293,74 +1394,121 @@ class BotEngine:
         if not result_a.filled or not result_b.filled:
             return
 
-        # Trade opened successfully
-        self.metrics.open += 1
-        self.metrics.record_slippage(result_a.slippage_bps, result_b.slippage_bps)
-
-        trade_record = {
-            "coin": coin,
-            "entry_time": datetime.now(timezone.utc).isoformat(),
+        # Build fill record
+        fill_record = {
+            "size": result_a.size,
             "entry_price_a": result_a.price,
             "entry_price_b": result_b.price,
-            "size": result_a.size,  # Use actual filled size
-            "side_a": side_a,
-            "side_b": side_b,
-            "entry_spread": float(metrics.get("edge_long_bps" if edge_direction == "long" else "edge_short_bps", 0)),
-            "edge_at_entry": net_edge,
             "slippage_a": result_a.slippage_bps,
             "slippage_b": result_b.slippage_bps,
-            "direction": edge_direction,
+            "edge_at_entry": net_edge,
+            "entry_spread": float(metrics.get("edge_long_bps" if edge_direction == "long" else "edge_short_bps", 0)),
+            "entry_time": datetime.now(timezone.utc).isoformat(),
         }
-        self._open_trades[coin] = trade_record
 
-        logger.info(f"[Bot {self.bot_id}] TRADE OPENED {coin} a={result_a.price} b={result_b.price} size={result_a.size} (open={len(self._open_trades)})")
+        self.metrics.record_slippage(result_a.slippage_bps, result_b.slippage_bps)
 
-        if self.on_trade_callback:
-            self.on_trade_callback("open", self.bot_id, trade_record)
+        if existing:
+            # Accumulate: add fill and recalculate weighted averages
+            old_size = existing["total_size"]
+            new_size = result_a.size
+            total = old_size + new_size
+
+            existing["avg_entry_a"] = (existing["avg_entry_a"] * old_size + result_a.price * new_size) / total
+            existing["avg_entry_b"] = (existing["avg_entry_b"] * old_size + result_b.price * new_size) / total
+            existing["total_size"] = total
+            existing["fills"].append(fill_record)
+
+            logger.info(
+                f"[Bot {self.bot_id}] FILL ADDED {coin} +{new_size:.4f} total={total:.4f} "
+                f"avg_a={existing['avg_entry_a']:.6f} avg_b={existing['avg_entry_b']:.6f} "
+                f"fills={len(existing['fills'])} (open={len(self._open_trades)})"
+            )
+
+            if self.on_trade_callback:
+                self.on_trade_callback("add_fill", self.bot_id, {
+                    "coin": coin,
+                    "fill": fill_record,
+                    "total_size": total,
+                    "avg_entry_a": existing["avg_entry_a"],
+                    "avg_entry_b": existing["avg_entry_b"],
+                })
+        else:
+            # New position
+            self.metrics.open += 1
+            position = {
+                "coin": coin,
+                "direction": edge_direction,
+                "side_a": side_a,
+                "side_b": side_b,
+                "total_size": result_a.size,
+                "avg_entry_a": result_a.price,
+                "avg_entry_b": result_b.price,
+                "fills": [fill_record],
+            }
+            self._open_trades[coin] = position
+
+            logger.info(
+                f"[Bot {self.bot_id}] TRADE OPENED {coin} a={result_a.price} b={result_b.price} "
+                f"size={result_a.size} (open={len(self._open_trades)})"
+            )
+
+            if self.on_trade_callback:
+                self.on_trade_callback("open", self.bot_id, {
+                    "coin": coin,
+                    "direction": edge_direction,
+                    "side_a": side_a,
+                    "side_b": side_b,
+                    "size": result_a.size,
+                    "entry_price_a": result_a.price,
+                    "entry_price_b": result_b.price,
+                    "entry_spread": fill_record["entry_spread"],
+                    "edge_at_entry": net_edge,
+                    "slippage_a": result_a.slippage_bps,
+                    "slippage_b": result_b.slippage_bps,
+                    "entry_time": fill_record["entry_time"],
+                })
 
     async def _check_exit_vwap(self, coin: str, metrics: dict):
-        """Exit check using VWAP metrics."""
-        trade = self._open_trades.get(coin)
-        if not trade:
+        """Exit check — progressive closing based on available liquidity."""
+        position = self._open_trades.get(coin)
+        if not position:
             return
 
-        entry_a = trade["entry_price_a"]
-        entry_b = trade["entry_price_b"]
-        size = trade["size"]
+        entry_a = position["avg_entry_a"]
+        entry_b = position["avg_entry_b"]
+        total_size = position["total_size"]
         mid_a = metrics["mid_a"]
         mid_b = metrics["mid_b"]
 
-        # Compute PnL based on trade direction
-        trade_dir = trade.get("direction", "long")
+        # Compute PnL based on trade direction (using weighted avg entry)
+        trade_dir = position.get("direction", "long")
         if trade_dir == "long":
-            # Long A, Short B: profit when A rises and/or B falls
-            pnl_a = (mid_a - entry_a) * size
-            pnl_b = (entry_b - mid_b) * size
+            pnl_a = (mid_a - entry_a) * total_size
+            pnl_b = (entry_b - mid_b) * total_size
         else:
-            # Short A, Long B: profit when A falls and/or B rises
-            pnl_a = (entry_a - mid_a) * size
-            pnl_b = (mid_b - entry_b) * size
+            pnl_a = (entry_a - mid_a) * total_size
+            pnl_b = (mid_b - entry_b) * total_size
 
         gross_pnl = pnl_a + pnl_b
 
         # Fee calculation
         fee_a = self._get_fee_bps(self._prefix_a)
         fee_b = self._get_fee_bps(self._prefix_b)
-        fee_rt_bps = (fee_a + fee_b) * 2  # roundtrip = open + close
+        fee_rt_bps = (fee_a + fee_b) * 2
         mid_ref = metrics["mid_ref"]
-        fee_usd = fee_rt_bps / 10000 * mid_ref * size
+        fee_usd = fee_rt_bps / 10000 * mid_ref * total_size
         net_pnl = gross_pnl - fee_usd
 
         should_exit = False
         close_reason = ""
 
         if self.config.exit_mode == "on_profit":
-            threshold = fee_usd + (self.config.close_buffer_bps / 10000 * mid_ref * size)
+            threshold = fee_usd + (self.config.close_buffer_bps / 10000 * mid_ref * total_size)
             if net_pnl > threshold:
                 should_exit = True
                 close_reason = "on_profit"
         elif self.config.exit_mode == "on_reverse":
-            # Check if edge has reversed
             if trade_dir == "long":
                 current_edge = metrics.get("net_edge_long_bps", 0)
             else:
@@ -1372,36 +1520,104 @@ class BotEngine:
         if not should_exit:
             return
 
-        exit_side_a = "sell" if trade["side_a"] == "buy" else "buy"
-        exit_side_b = "sell" if trade["side_b"] == "buy" else "buy"
+        # Progressive close: size based on available liquidity
+        exit_side_a = "sell" if position["side_a"] == "buy" else "buy"
+        exit_side_b = "sell" if position["side_b"] == "buy" else "buy"
 
-        result_a, result_b = await self._execute_pair_order(coin, exit_side_a, exit_side_b, size, mid_a, mid_b)
+        book_a, book_b = self._get_books_for_coin(coin)
+
+        if exit_side_a == "buy":
+            top_sz_a = book_a.get("asks", [(0, 0)])[0][1] if book_a.get("asks") else 0
+        else:
+            top_sz_a = book_a.get("bids", [(0, 0)])[0][1] if book_a.get("bids") else 0
+
+        if exit_side_b == "buy":
+            top_sz_b = book_b.get("asks", [(0, 0)])[0][1] if book_b.get("asks") else 0
+        else:
+            top_sz_b = book_b.get("bids", [(0, 0)])[0][1] if book_b.get("bids") else 0
+
+        # Close as much as liquidity allows, capped by remaining position
+        exit_size = min(top_sz_a, top_sz_b, total_size)
+        if exit_size <= 0:
+            return
+
+        result_a, result_b = await self._execute_pair_order(coin, exit_side_a, exit_side_b, exit_size, mid_a, mid_b)
 
         if result_a is None or result_b is None:
             logger.warning(f"[Bot {self.bot_id}] Exit order failed on {coin}, position still open")
             return
 
-        self.metrics.record_trade_close(net_pnl, fee_usd, size * mid_ref * 2)
+        # Calculate PnL proportional to exit size
+        exit_fraction = exit_size / total_size
+        partial_pnl = net_pnl * exit_fraction
+        partial_fee = fee_usd * exit_fraction
+
         self.metrics.record_slippage(
             result_a.slippage_bps if result_a else 0,
             result_b.slippage_bps if result_b else 0,
         )
 
-        logger.info(f"[Bot {self.bot_id}] TRADE CLOSED {coin} pnl={net_pnl:.6f} reason={close_reason} (open={len(self._open_trades) - 1})")
+        remaining_size = total_size - exit_size
+        is_full_close = remaining_size <= 0.000001  # floating point tolerance
 
-        if self.on_trade_callback:
-            close_record = {
-                **trade,
-                "exit_time": datetime.now(timezone.utc).isoformat(),
-                "exit_price_a": mid_a,
-                "exit_price_b": mid_b,
-                "pnl": net_pnl,
-                "fees": fee_usd,
-                "close_reason": close_reason,
-            }
-            self.on_trade_callback("close", self.bot_id, close_record)
+        if is_full_close:
+            # Full close
+            self.metrics.record_trade_close(net_pnl, fee_usd, total_size * mid_ref * 2)
+            logger.info(
+                f"[Bot {self.bot_id}] TRADE CLOSED {coin} pnl={net_pnl:.6f} reason={close_reason} "
+                f"fills={len(position['fills'])} (open={len(self._open_trades) - 1})"
+            )
 
-        self._open_trades.pop(coin, None)
+            if self.on_trade_callback:
+                self.on_trade_callback("close", self.bot_id, {
+                    "coin": coin,
+                    "direction": trade_dir,
+                    "side_a": position["side_a"],
+                    "side_b": position["side_b"],
+                    "size": total_size,
+                    "entry_price_a": entry_a,
+                    "entry_price_b": entry_b,
+                    "exit_time": datetime.now(timezone.utc).isoformat(),
+                    "exit_price_a": mid_a,
+                    "exit_price_b": mid_b,
+                    "pnl": net_pnl,
+                    "fees": fee_usd,
+                    "close_reason": close_reason,
+                })
+
+            self._open_trades.pop(coin, None)
+        else:
+            # Partial close — reduce position size, keep fills proportionally
+            self.metrics.record_trade_close(partial_pnl, partial_fee, exit_size * mid_ref * 2)
+            position["total_size"] = remaining_size
+            # Remove fills FIFO until we've accounted for exit_size
+            remaining_to_remove = exit_size
+            while position["fills"] and remaining_to_remove > 0.000001:
+                first_fill = position["fills"][0]
+                if first_fill["size"] <= remaining_to_remove + 0.000001:
+                    remaining_to_remove -= first_fill["size"]
+                    position["fills"].pop(0)
+                else:
+                    first_fill["size"] -= remaining_to_remove
+                    remaining_to_remove = 0
+
+            logger.info(
+                f"[Bot {self.bot_id}] PARTIAL CLOSE {coin} closed={exit_size:.4f} remaining={remaining_size:.4f} "
+                f"pnl={partial_pnl:.6f} reason={close_reason} fills_left={len(position['fills'])}"
+            )
+
+            if self.on_trade_callback:
+                self.on_trade_callback("partial_close", self.bot_id, {
+                    "coin": coin,
+                    "exit_size": exit_size,
+                    "remaining_size": remaining_size,
+                    "exit_price_a": mid_a,
+                    "exit_price_b": mid_b,
+                    "pnl": partial_pnl,
+                    "fees": partial_fee,
+                    "close_reason": close_reason,
+                    "exit_time": datetime.now(timezone.utc).isoformat(),
+                })
 
     # ── Legacy check_exit for backwards compat ──
 
@@ -1488,16 +1704,16 @@ class BotEngine:
         self.state = BotState.LIQUIDATING
 
         if self._open_trades and self._exchange:
-            for coin, trade in list(self._open_trades.items()):
+            for coin, pos in list(self._open_trades.items()):
                 try:
-                    exit_side_a = "sell" if trade["side_a"] == "buy" else "buy"
-                    exit_side_b = "sell" if trade["side_b"] == "buy" else "buy"
+                    exit_side_a = "sell" if pos["side_a"] == "buy" else "buy"
+                    exit_side_b = "sell" if pos["side_b"] == "buy" else "buy"
 
                     mid_a, mid_b = self._get_mids_for_coin(coin)
-                    mid_a = mid_a or trade["entry_price_a"]
-                    mid_b = mid_b or trade["entry_price_b"]
+                    mid_a = mid_a or pos["avg_entry_a"]
+                    mid_b = mid_b or pos["avg_entry_b"]
 
-                    await self._execute_pair_order(coin, exit_side_a, exit_side_b, trade["size"], mid_a, mid_b)
+                    await self._execute_pair_order(coin, exit_side_a, exit_side_b, pos["total_size"], mid_a, mid_b)
                 except Exception as e:
                     logger.error(f"[Bot {self.bot_id}] Liquidation error on {coin}: {e}")
             self._open_trades.clear()

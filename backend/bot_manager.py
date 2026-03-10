@@ -201,17 +201,19 @@ class BotManager:
             logger.warning(f"Failed to save state for bot {bot_id}: {e}")
 
     def _on_trade(self, action: str, bot_id: int, trade_data: dict):
-        """Callback from BotEngine when a trade opens or closes."""
+        """Callback from BotEngine when a trade opens, accumulates, or closes."""
         try:
             conn = self._db()
             if action == "open":
-                conn.execute(
-                    """INSERT INTO trades (bot_id, status, direction, pair_a, pair_b,
+                # New position — insert trade + first fill
+                cursor = conn.execute(
+                    """INSERT INTO trades (bot_id, status, coin, direction, pair_a, pair_b,
                        side_a, side_b, size, entry_price_a, entry_price_b,
                        entry_spread, edge_at_entry, slippage_a, slippage_b, entry_time)
-                       VALUES (?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         bot_id,
+                        trade_data.get("coin"),
                         self._bots[bot_id].direction,
                         self._bots[bot_id].pair_a,
                         self._bots[bot_id].pair_b,
@@ -220,19 +222,98 @@ class BotManager:
                         trade_data["size"],
                         trade_data["entry_price_a"],
                         trade_data["entry_price_b"],
-                        trade_data["entry_spread"],
-                        trade_data["edge_at_entry"],
-                        trade_data["slippage_a"],
-                        trade_data["slippage_b"],
-                        trade_data["entry_time"],
+                        trade_data.get("entry_spread", 0),
+                        trade_data.get("edge_at_entry", 0),
+                        trade_data.get("slippage_a", 0),
+                        trade_data.get("slippage_b", 0),
+                        trade_data.get("entry_time"),
                     ),
                 )
+                trade_id = cursor.lastrowid
+                # Insert first fill
+                conn.execute(
+                    """INSERT INTO fills (trade_id, size, entry_price_a, entry_price_b,
+                       slippage_a, slippage_b, edge_at_entry, entry_time)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        trade_id,
+                        trade_data["size"],
+                        trade_data["entry_price_a"],
+                        trade_data["entry_price_b"],
+                        trade_data.get("slippage_a", 0),
+                        trade_data.get("slippage_b", 0),
+                        trade_data.get("edge_at_entry", 0),
+                        trade_data.get("entry_time"),
+                    ),
+                )
+
+            elif action == "add_fill":
+                # Accumulation — update existing trade size/entry, add fill record
+                coin = trade_data.get("coin")
+                fill = trade_data.get("fill", {})
+                # Find the open trade for this bot+coin
+                row = conn.execute(
+                    "SELECT id FROM trades WHERE bot_id = ? AND coin = ? AND status = 'open' ORDER BY created_at DESC LIMIT 1",
+                    (bot_id, coin),
+                ).fetchone()
+                if row:
+                    trade_id = row[0]
+                    conn.execute(
+                        """UPDATE trades SET size = ?, entry_price_a = ?, entry_price_b = ?
+                           WHERE id = ?""",
+                        (
+                            trade_data.get("total_size"),
+                            trade_data.get("avg_entry_a"),
+                            trade_data.get("avg_entry_b"),
+                            trade_id,
+                        ),
+                    )
+                    conn.execute(
+                        """INSERT INTO fills (trade_id, size, entry_price_a, entry_price_b,
+                           slippage_a, slippage_b, edge_at_entry, entry_time)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            trade_id,
+                            fill.get("size", 0),
+                            fill.get("entry_price_a", 0),
+                            fill.get("entry_price_b", 0),
+                            fill.get("slippage_a", 0),
+                            fill.get("slippage_b", 0),
+                            fill.get("edge_at_entry", 0),
+                            fill.get("entry_time"),
+                        ),
+                    )
+
+            elif action == "partial_close":
+                # Progressive close — update remaining size, accumulate PnL
+                coin = trade_data.get("coin")
+                remaining = trade_data.get("remaining_size", 0)
+                row = conn.execute(
+                    "SELECT id, pnl, fees FROM trades WHERE bot_id = ? AND coin = ? AND status = 'open' ORDER BY created_at DESC LIMIT 1",
+                    (bot_id, coin),
+                ).fetchone()
+                if row:
+                    trade_id, old_pnl, old_fees = row
+                    conn.execute(
+                        """UPDATE trades SET size = ?,
+                           pnl = ?, fees = ?
+                           WHERE id = ?""",
+                        (
+                            remaining,
+                            (old_pnl or 0) + trade_data.get("pnl", 0),
+                            (old_fees or 0) + trade_data.get("fees", 0),
+                            trade_id,
+                        ),
+                    )
+
             elif action == "close":
+                # Full close
+                coin = trade_data.get("coin")
                 conn.execute(
                     """UPDATE trades SET status = 'closed',
                        exit_price_a = ?, exit_price_b = ?,
                        pnl = ?, fees = ?, close_reason = ?, exit_time = ?
-                       WHERE bot_id = ? AND status = 'open'
+                       WHERE bot_id = ? AND coin = ? AND status = 'open'
                        ORDER BY created_at DESC LIMIT 1""",
                     (
                         trade_data.get("exit_price_a"),
@@ -242,8 +323,10 @@ class BotManager:
                         trade_data.get("close_reason"),
                         trade_data.get("exit_time"),
                         bot_id,
+                        coin,
                     ),
                 )
+
             conn.commit()
             conn.close()
         except Exception as e:
@@ -346,6 +429,7 @@ class BotManager:
                 "api_key_masked": ("..." + engine.api_key[-4:]) if engine and engine.api_key and len(engine.api_key) > 4 else "",
                 "pairs": EXCHANGE_PAIRS.get(defn["exchange"], []),
                 "tiers_enabled": True,
+                "open_trades": engine.get_open_trades_view() if engine else [],
             }
             bots.append(bot_view)
         return bots

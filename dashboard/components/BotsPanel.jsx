@@ -52,7 +52,7 @@ const DEFAULT_BOTS = [
   ...d, label: d.name, state: 'stopped', wallet: '', sub_account: '',
   collateral: { usdc: 0, usdh: 0, total: 0 }, ping_ms: 0, fees_bps: 0.45,
   metrics: { ...DEFAULT_METRICS }, config: { ...DEFAULT_CONFIG },
-  pairs: [], tiers_enabled: true,
+  pairs: [], tiers_enabled: true, open_trades: [],
 }));
 
 const DEFAULT_GLOBAL_STATS = {
@@ -473,6 +473,9 @@ function BotColumn({ bot, spreadStats, onAction, onConfigUpdate, onWalletSet, on
         </div>
       </div>
 
+      {/* ─── Open Positions Section ──── */}
+      <OpenPositionsSection bot={bot} />
+
       {/* ─── Config Section ──── */}
       <div className="bg-bg-card rounded-xl border border-bg-border p-4">
         <div className="flex items-center gap-2 mb-4">
@@ -772,6 +775,135 @@ function WalletField({ label, value, botId, field, editingWallet, setEditingWall
           </button>
         </>
       )}
+    </div>
+  );
+}
+
+// ─── Open Positions Section ─────────────────────────────────
+function fmtDuration(seconds) {
+  if (!seconds || seconds <= 0) return '0s';
+  if (seconds < 60) return `${Math.floor(seconds)}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return m > 0 ? `${h}h${m}m` : `${h}h`;
+}
+
+function OpenPositionsSection({ bot }) {
+  const [expanded, setExpanded] = useState({});
+  const trades = bot.open_trades || [];
+
+  if (trades.length === 0) {
+    return (
+      <div className="bg-bg-card rounded-xl border border-bg-border p-3">
+        <div className="flex items-center gap-2">
+          <div className="w-1 h-4 rounded bg-gray-600" />
+          <span className="text-xs font-bold text-gray-400 uppercase">Open Positions</span>
+          <span className="text-[10px] text-gray-600 ml-auto">No positions</span>
+        </div>
+      </div>
+    );
+  }
+
+  const totalPnl = trades.reduce((s, t) => s + (t.unrealized_pnl_net || 0), 0);
+
+  return (
+    <div className="bg-bg-card rounded-xl border border-bg-border p-3 space-y-2">
+      <div className="flex items-center gap-2">
+        <div className="w-1 h-4 rounded bg-accent-blue" />
+        <span className="text-xs font-bold text-gray-200 uppercase">Open Positions</span>
+        <span className="text-[10px] text-gray-500 ml-1">({trades.length})</span>
+        <span className={`text-xs font-mono font-bold ml-auto ${pnlClass(totalPnl)}`}>{fmtUsd(totalPnl)}</span>
+      </div>
+
+      {trades.map(t => {
+        const isExpanded = expanded[t.coin];
+        return (
+          <div key={t.coin} className="border border-bg-border rounded-lg overflow-hidden">
+            {/* Aggregated row */}
+            <button
+              onClick={() => setExpanded(prev => ({ ...prev, [t.coin]: !prev[t.coin] }))}
+              className="w-full flex items-center gap-2 px-3 py-2 hover:bg-bg-primary/50 transition-colors text-left"
+            >
+              <span className="text-[10px] font-bold text-accent-blue bg-accent-blue/10 px-1.5 py-0.5 rounded">{t.coin}</span>
+              <span className={`text-[10px] font-semibold ${t.direction === 'long' ? 'text-accent-green' : 'text-accent-red'}`}>
+                {t.direction?.toUpperCase()}
+              </span>
+              <span className="text-[10px] text-gray-400 font-mono">${(t.notional_usd || 0).toFixed(0)}</span>
+              <span className="text-[10px] text-gray-500">{t.num_fills || 1} fill{(t.num_fills || 1) > 1 ? 's' : ''}</span>
+              <span className="text-[10px] text-gray-500 ml-auto">{fmtDuration(t.duration_s)}</span>
+              <span className={`text-xs font-mono font-bold ${pnlClass(t.unrealized_pnl_net)}`}>
+                {fmtUsd(t.unrealized_pnl_net || 0)}
+              </span>
+              <svg className={`w-3 h-3 text-gray-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {/* Expanded details */}
+            {isExpanded && (
+              <div className="border-t border-bg-border bg-bg-primary/30 px-3 py-2 space-y-2">
+                {/* Aggregate stats */}
+                <div className="grid grid-cols-4 gap-2 text-[10px]">
+                  <div>
+                    <span className="text-gray-600 block">Avg Entry A</span>
+                    <span className="text-gray-300 font-mono">{(t.avg_entry_a || 0).toFixed(4)}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600 block">Avg Entry B</span>
+                    <span className="text-gray-300 font-mono">{(t.avg_entry_b || 0).toFixed(4)}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600 block">Mid A</span>
+                    <span className="text-gray-300 font-mono">{(t.current_mid_a || 0).toFixed(4)}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600 block">Mid B</span>
+                    <span className="text-gray-300 font-mono">{(t.current_mid_b || 0).toFixed(4)}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600 block">Size (units)</span>
+                    <span className="text-gray-300 font-mono">{(t.total_size || 0).toFixed(4)}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600 block">Gross PnL</span>
+                    <span className={`font-mono ${pnlClass(t.unrealized_pnl_gross)}`}>{fmtUsd(t.unrealized_pnl_gross || 0)}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600 block">Fees Est</span>
+                    <span className="text-gray-300 font-mono">{fmtUsd(t.fees_est || 0)}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600 block">Avg Slip</span>
+                    <span className="text-gray-300 font-mono">{(t.avg_slippage_bps || 0).toFixed(2)} bps</span>
+                  </div>
+                </div>
+
+                {/* Individual fills */}
+                {t.fills && t.fills.length > 0 && (
+                  <div>
+                    <div className="text-[9px] text-gray-600 uppercase tracking-wider font-semibold mb-1">Fills ({t.fills.length})</div>
+                    <div className="space-y-1">
+                      {t.fills.map((f, i) => (
+                        <div key={i} className="flex items-center gap-2 text-[10px] bg-bg-primary/50 rounded px-2 py-1">
+                          <span className="text-gray-500 w-4">#{i + 1}</span>
+                          <span className="text-gray-400 font-mono">{(f.size || 0).toFixed(4)}</span>
+                          <span className="text-gray-600">@</span>
+                          <span className="text-gray-300 font-mono">{(f.entry_price_a || 0).toFixed(4)}</span>
+                          <span className="text-gray-600">/</span>
+                          <span className="text-gray-300 font-mono">{(f.entry_price_b || 0).toFixed(4)}</span>
+                          <span className="text-gray-500 ml-auto">{(f.slippage_a || 0).toFixed(1)}/{(f.slippage_b || 0).toFixed(1)} bps</span>
+                          <span className="text-gray-500">{f.edge_at_entry?.toFixed(1)} edge</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
