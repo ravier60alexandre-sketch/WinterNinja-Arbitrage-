@@ -74,21 +74,38 @@ http://<your-vps-ip>:3000
 
 If running locally: `http://localhost:3000`
 
+### 6b. Bot Engine Setup (Optional)
+
+To enable automated trading bots:
+
+```bash
+cd backend
+pip install -r requirements.txt
+```
+
+Copy `.env.bots` to `.env` and fill in your credentials:
+
+```bash
+cp .env.bots .env
+```
+
+The bot engine starts automatically with `npm start` if `backend/main.py` exists and credentials are configured.
+
 ## Production Deployment (Optional)
 
 For running 24/7 on a VPS, use PM2:
 
 ```bash
 npm install -g pm2
-pm2 start start.js --name hip3-analyzer
+pm2 start ecosystem.config.js
 pm2 save
 pm2 startup
 ```
 
 Useful PM2 commands:
-- `pm2 logs hip3-analyzer` — View live logs
-- `pm2 restart hip3-analyzer` — Restart the analyzer
-- `pm2 stop hip3-analyzer` — Stop the analyzer
+- `pm2 logs hip3-monitor` — View live logs
+- `pm2 restart hip3-monitor` — Restart the analyzer
+- `pm2 stop hip3-monitor` — Stop the analyzer
 - `pm2 monit` — Monitor resource usage
 
 ## Configuration

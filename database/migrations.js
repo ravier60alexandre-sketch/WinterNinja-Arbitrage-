@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const CURRENT_VERSION = 1;
+const CURRENT_VERSION = 2;
 
 function runMigrations(db) {
   db.exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)`);
@@ -14,6 +14,17 @@ function runMigrations(db) {
     const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
     db.exec(schema);
     db.prepare('INSERT OR REPLACE INTO schema_version (version) VALUES (?)').run(1);
+  }
+
+  if (currentVersion < 2) {
+    console.log('[DB] Running migration v2: add mr_edge_frequency and amplitude_bps to rolling_stats');
+    try {
+      db.exec(`ALTER TABLE rolling_stats ADD COLUMN mr_edge_frequency REAL`);
+    } catch (e) { /* column may already exist */ }
+    try {
+      db.exec(`ALTER TABLE rolling_stats ADD COLUMN amplitude_bps REAL`);
+    } catch (e) { /* column may already exist */ }
+    db.prepare('INSERT OR REPLACE INTO schema_version (version) VALUES (?)').run(2);
   }
 
   console.log(`[DB] Schema at version ${CURRENT_VERSION}`);

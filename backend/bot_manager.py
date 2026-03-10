@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import sqlite3
+import time
 from pathlib import Path
 
 from bot_engine import BotConfig, BotEngine, BotMetrics, BotState
@@ -508,7 +509,6 @@ class BotManager:
         Running bots refresh their own balances via _balance_loop.
         Only refetch if last fetch was >30s ago to avoid spamming the API.
         """
-        import time
         now = time.time()
         tasks = []
         for engine in self._bots.values():

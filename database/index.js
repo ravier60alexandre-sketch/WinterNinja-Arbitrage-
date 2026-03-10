@@ -63,8 +63,9 @@ function prepareStatements() {
       count, mean_spread_bps, median_spread_bps,
       p10_spread_bps, p90_spread_bps, stddev_spread_bps,
       max_spread_bps, min_spread_bps,
-      edge_frequency, mean_reversion_score
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      edge_frequency, mean_reversion_score,
+      mr_edge_frequency, amplitude_bps
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   statements.getLatestStats = db.prepare(`
@@ -149,7 +150,8 @@ function insertStats(data) {
       data.count, data.mean_spread_bps, data.median_spread_bps,
       data.p10_spread_bps, data.p90_spread_bps, data.stddev_spread_bps,
       data.max_spread_bps, data.min_spread_bps,
-      data.edge_frequency, data.mean_reversion_score
+      data.edge_frequency, data.mean_reversion_score,
+      data.mr_edge_frequency || null, data.amplitude_bps || null
     );
   } catch (err) {
     console.error('[DB] Stats insert error:', err.message);

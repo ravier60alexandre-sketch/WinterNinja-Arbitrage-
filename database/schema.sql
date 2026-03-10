@@ -38,7 +38,9 @@ CREATE TABLE IF NOT EXISTS rolling_stats (
   max_spread_bps       REAL,
   min_spread_bps       REAL,
   edge_frequency       REAL,
-  mean_reversion_score REAL
+  mean_reversion_score REAL,
+  mr_edge_frequency    REAL,
+  amplitude_bps        REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_rolling_stats_pair ON rolling_stats(pair_a, pair_b, window, direction, timestamp);

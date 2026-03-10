@@ -205,9 +205,9 @@ export default function EntryCalculator({ stats, defaultFee, defaultSlippage }) 
         <p className="text-[10px] text-gray-600 uppercase tracking-wider font-semibold mb-1">Formulas</p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-0.5 text-[10px] text-gray-500">
           <div><span className="text-accent-green font-medium">Entry</span> — P_selected + buffer + slippage. Spread must exceed this to open.</div>
-          <div><span className="text-accent-amber font-medium">Fee RT</span> — Taker fee x 2 legs. Cost total aller-retour.</div>
-          <div><span className="text-gray-300 font-medium">Close</span> — PnL &gt; fee RT + buffer. Ferme au fur et à mesure de la liquidité.</div>
-          <div><span className="text-gray-300 font-medium">Taille</span> — Identique sur les 2 legs, pas d'arrondi.</div>
+          <div><span className="text-accent-amber font-medium">Fee RT</span> — Taker fee x 2 legs. Total round-trip cost.</div>
+          <div><span className="text-gray-300 font-medium">Close</span> — PnL &gt; fee RT + buffer. Closes progressively as liquidity allows.</div>
+          <div><span className="text-gray-300 font-medium">Size</span> — Same size on both legs, no rounding.</div>
         </div>
       </div>
     </div>

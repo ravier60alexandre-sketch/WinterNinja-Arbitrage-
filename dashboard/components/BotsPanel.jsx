@@ -492,7 +492,7 @@ function BotColumn({ bot, spreadStats, onAction, onConfigUpdate, onWalletSet, on
             <ConfigInput label="Max Pos ($)" value={localConfig?.max_pos} onChange={v => updateLocal('max_pos', parseFloat(v))} />
             <ConfigInput label="Max Global" value={localConfig?.max_global} onChange={v => updateLocal('max_global', parseFloat(v))} />
           </div>
-          <div className="text-[9px] text-gray-600 mt-1">Taille identique sur les 2 legs, pas d'arrondi.</div>
+          <div className="text-[9px] text-gray-600 mt-1">Same size on both legs, no rounding.</div>
         </div>
 
         {/* Risk */}

@@ -659,9 +659,7 @@ class BotEngine:
 
                 for b in spot_data.get("balances", []):
                     token = b.get("coin", "").upper()
-                    total_bal = float(b.get("total", 0))
-                    hold = float(b.get("hold", 0))
-                    available = total_bal
+                    available = float(b.get("total", 0))
                     if token == "USDC":
                         usdc += available
                     elif token in ("USDT",):

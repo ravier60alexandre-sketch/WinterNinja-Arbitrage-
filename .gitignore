@@ -7,3 +7,10 @@ data/
 *.db-shm
 __pycache__/
 *.pyc
+*.pyo
+.venv/
+venv/
+.python-version
+*.egg-info/
+dist/
+build/

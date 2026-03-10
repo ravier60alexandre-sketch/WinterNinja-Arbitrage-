@@ -6,8 +6,8 @@ import asyncio
 import json
 import logging
 import os
-import signal
 import sqlite3
+import time
 from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -158,7 +158,7 @@ app = FastAPI(title="HyperArbitrage Bot Engine", version="1.0.0", lifespan=lifes
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -255,7 +255,6 @@ async def bot_diagnostics(bot_id: int):
     if not bot:
         return {"error": f"Bot {bot_id} not found"}
 
-    import time
     now = time.time()
     books_info = {}
     for coin in bot._enabled_pairs:
