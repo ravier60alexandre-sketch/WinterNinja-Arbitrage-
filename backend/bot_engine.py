@@ -345,12 +345,15 @@ def compute_vwap_metrics(
     # Direction 2: Short A (sell A), Long B (buy B)
     edge_short_bps = (sell_a["vwap"] - buy_b["vwap"]) / mid_ref * 10000
 
-    # Fee thresholds (matching Replit: feeOpenBps = (takerFeeA + takerFeeB) * 10000)
+    # Fee thresholds: round-trip fees (open + close, 2 legs each way)
+    # Previously only deducted opening fees, causing entries that looked profitable
+    # but were actually losers after closing costs.
     fee_open_bps = fee_a_bps + fee_b_bps
+    fee_rt_bps = fee_open_bps * 2  # round-trip: open + close
 
-    # Net edges after fees
-    net_edge_long = edge_long_bps - fee_open_bps
-    net_edge_short = edge_short_bps - fee_open_bps
+    # Net edges after ROUND-TRIP fees (ensures only truly profitable entries)
+    net_edge_long = edge_long_bps - fee_rt_bps
+    net_edge_short = edge_short_bps - fee_rt_bps
 
     # Capacity = minimum fill between both legs
     capacity_long = min(buy_a["filled"], sell_b["filled"])
@@ -365,6 +368,7 @@ def compute_vwap_metrics(
         "net_edge_long_bps": net_edge_long,
         "net_edge_short_bps": net_edge_short,
         "fee_open_bps": fee_open_bps,
+        "fee_rt_bps": fee_rt_bps,
         "capacity_long": capacity_long,
         "capacity_short": capacity_short,
         "buy_a_vwap": buy_a["vwap"],
@@ -1005,9 +1009,12 @@ class BotEngine:
         sz_dec_a = self._get_sz_decimals(sym_a)
         sz_dec_b = self._get_sz_decimals(sym_b)
 
-        # Round size according to szDecimals
-        rounded_size_a = round_size(size, sz_dec_a)
-        rounded_size_b = round_size(size, sz_dec_b)
+        # Round BOTH legs to the LEAST precise decimal to ensure identical sizes.
+        # Without this, different szDecimals between deployers cause unhedged exposure
+        # (e.g. flx=2.64 vs xyz=2.647 → 0.007 CRCL unhedged).
+        sz_dec_common = min(sz_dec_a, sz_dec_b)
+        rounded_size_a = round_size(size, sz_dec_common)
+        rounded_size_b = round_size(size, sz_dec_common)
 
         if rounded_size_a <= 0 or rounded_size_b <= 0:
             logger.warning(f"[Bot {self.bot_id}] Size rounds to 0 for {coin} (sz_dec_a={sz_dec_a}, sz_dec_b={sz_dec_b})")
@@ -1213,7 +1220,7 @@ class BotEngine:
         coins_no_books = 0
 
         # Collect all eligible coins for entry (multi-position support)
-        eligible_entries: list[tuple[str, dict, str, float]] = []  # (coin, metrics, direction, edge)
+        eligible_entries: list[tuple[str, dict, str, float, float]] = []  # (coin, metrics, direction, edge, dynamic_min_edge)
 
         for coin in self._enabled_pairs:
             # Skip coins with funding block
@@ -1247,8 +1254,17 @@ class BotEngine:
                 best_coin = coin
                 best_direction = direction
 
+            # Dynamic threshold: use percentile of historical spreads if available.
+            # This filters out entries that are below the Nth percentile of observed
+            # spreads, ensuring we only enter on unusually wide spreads.
+            dynamic_edge = min_edge
+            pct_threshold = self._compute_percentile(coin, self.config.timeframe)
+            if pct_threshold is not None:
+                pct_bps = float(pct_threshold)
+                dynamic_edge = max(min_edge, pct_bps)
+
             # Track eligible entries (above threshold — allows accumulation on existing positions)
-            if edge >= min_edge:
+            if edge >= dynamic_edge:
                 existing = self._open_trades.get(coin)
                 # Skip if already at max position size
                 if existing:
@@ -1259,7 +1275,7 @@ class BotEngine:
                     # Skip if existing position is in opposite direction
                     if existing["direction"] != direction:
                         continue
-                eligible_entries.append((coin, metrics, direction, edge))
+                eligible_entries.append((coin, metrics, direction, edge, dynamic_edge))
 
         # ── Periodic diagnostic log (every 30s) ──
         now = time.time()
@@ -1298,8 +1314,8 @@ class BotEngine:
 
         # Check entry on ALL eligible coins (sorted by edge, best first)
         eligible_entries.sort(key=lambda x: x[3], reverse=True)
-        for coin, coin_metrics, direction, edge in eligible_entries:
-            await self._check_entry_vwap(coin, coin_metrics, direction, min_edge)
+        for coin, coin_metrics, direction, edge, coin_min_edge in eligible_entries:
+            await self._check_entry_vwap(coin, coin_metrics, direction, coin_min_edge)
 
     async def _check_entry_vwap(self, coin: str, metrics: dict, edge_direction: str, min_edge: float):
         """Entry check using VWAP metrics — supports position accumulation via multiple fills."""
