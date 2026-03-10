@@ -1150,11 +1150,12 @@ class BotEngine:
         self.metrics.orphans += 1
         logger.warning(f"[Bot {self.bot_id}] ONE-LEG detected on {coin}! A={result_a.filled}, B={result_b.filled}")
 
-        # Wait 4s before attempting unwind (matching Replit bot)
-        await asyncio.sleep(4.0)
+        # Wait 2s before attempting unwind (reduced from 4s to act faster)
+        await asyncio.sleep(2.0)
 
-        # Escalating slippage unwind attempts (Replit: 0.3%, 0.75%, 1.5%)
-        unwind_slippages = [0.003, 0.0075, 0.015]
+        # Escalating slippage unwind attempts — more tiers for illiquid HiP-3 markets
+        # Each attempt waits 1s between tries to allow new liquidity to arrive
+        unwind_slippages = [0.003, 0.0075, 0.015, 0.025, 0.04]
 
         filled_result = result_a if result_a.filled else result_b
         filled_sym = sym_a if result_a.filled else sym_b
@@ -1170,11 +1171,21 @@ class BotEngine:
 
         # Attempt to unwind the filled leg with escalating slippage
         close_side = "sell" if filled_result.side == "buy" else "buy"
-        for slip in unwind_slippages:
+        for i, slip in enumerate(unwind_slippages):
             try:
                 if not self._exchange:
                     break
-                unwind_price = filled_result.price * (1 + slip) if close_side == "buy" else filled_result.price * (1 - slip)
+
+                # Re-fetch current price from book for more accurate unwind pricing
+                book = self._books.get(filled_sym, {})
+                if close_side == "buy" and book.get("asks"):
+                    base_price = book["asks"][0][0]
+                elif close_side == "sell" and book.get("bids"):
+                    base_price = book["bids"][0][0]
+                else:
+                    base_price = filled_result.price
+
+                unwind_price = base_price * (1 + slip) if close_side == "buy" else base_price * (1 - slip)
 
                 sz_dec = self._get_sz_decimals(filled_sym)
                 unwind_size = round_size(filled_result.size, sz_dec)
@@ -1186,12 +1197,20 @@ class BotEngine:
                 statuses = result.get("response", {}).get("data", {}).get("statuses", [])
                 if statuses and "filled" in statuses[0]:
                     logger.info(f"[Bot {self.bot_id}] One-leg unwound at {slip*100:.1f}% slippage")
+                    # Apply post-orphan cooldown to prevent immediate re-entry
+                    self._last_order_attempt = time.time() + 10.0  # 15s total cooldown
                     return False
             except Exception as e:
                 logger.warning(f"[Bot {self.bot_id}] Unwind attempt at {slip*100:.1f}% failed: {e}")
 
+            # Wait between attempts to allow new liquidity to arrive
+            if i < len(unwind_slippages) - 1:
+                await asyncio.sleep(1.5)
+
         logger.error(f"[Bot {self.bot_id}] ORPHAN POSITION on {filled_sym} — all unwind attempts failed!")
         self.metrics.errors += 1
+        # Long cooldown after failed unwind to prevent cascading failures
+        self._last_order_attempt = time.time() + 25.0  # 30s cooldown
         return False
 
     # ── Main Trading Loop ──
@@ -1670,6 +1689,91 @@ class BotEngine:
             direction = "long" if metrics.get("net_edge_long_bps", 0) > metrics.get("net_edge_short_bps", 0) else "short"
             await self._check_entry_vwap(coin, metrics, direction, min_edge)
 
+    # ── Position Reconciliation ──
+
+    async def _reconcile_positions(self):
+        """Check Hyperliquid for actual open positions on startup.
+
+        Detects orphan positions left from crashes or failed unwinds.
+        If a position exists on-chain but not in _open_trades, log a warning
+        so the operator can manually close it or the bot won't re-enter that coin.
+        """
+        if not self.account_address:
+            return
+
+        trading_address = self.sub_account or self.account_address
+
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api.hyperliquid.xyz/info",
+                    json={"type": "clearinghouseState", "user": trading_address},
+                ) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+
+            positions = data.get("assetPositions", [])
+            hip3_positions = []
+
+            for p in positions:
+                pos_info = p.get("position", {})
+                coin = pos_info.get("coin", "")
+                szi = float(pos_info.get("szi", 0))
+                if szi == 0:
+                    continue
+
+                # Check if this is one of our deployer coins
+                for enabled_coin in self._enabled_pairs:
+                    sym_a = self._hip3_symbol(self._prefix_a, enabled_coin)
+                    sym_b = self._hip3_symbol(self._prefix_b, enabled_coin)
+                    if coin in (sym_a, sym_b):
+                        hip3_positions.append({
+                            "coin": coin,
+                            "base_coin": enabled_coin,
+                            "size": szi,
+                            "entry_px": float(pos_info.get("entryPx", 0)),
+                            "unrealized_pnl": float(pos_info.get("unrealizedPnl", 0)),
+                        })
+
+            if not hip3_positions:
+                logger.info(f"[Bot {self.bot_id}] Reconciliation: no open positions found on-chain")
+                return
+
+            # Check for orphan positions (on-chain but not in _open_trades)
+            for pos in hip3_positions:
+                base_coin = pos["base_coin"]
+                if base_coin not in self._open_trades:
+                    logger.warning(
+                        f"[Bot {self.bot_id}] ORPHAN DETECTED on startup: {pos['coin']} "
+                        f"size={pos['size']:.6f} entry={pos['entry_px']:.4f} "
+                        f"unrealized_pnl={pos['unrealized_pnl']:.4f} — "
+                        f"blocking new entries on {base_coin} until manually resolved"
+                    )
+                    # Block this coin from new entries by creating a placeholder position
+                    # This prevents the bot from doubling the orphan position
+                    self._open_trades[base_coin] = {
+                        "coin": base_coin,
+                        "direction": "long" if pos["size"] > 0 else "short",
+                        "side_a": "buy" if pos["size"] > 0 else "sell",
+                        "side_b": "sell" if pos["size"] > 0 else "buy",
+                        "total_size": abs(pos["size"]),
+                        "avg_entry_a": pos["entry_px"],
+                        "avg_entry_b": pos["entry_px"],
+                        "fills": [],
+                        "_orphan_recovered": True,
+                    }
+                    self.metrics.orphans += 1
+
+            logger.info(
+                f"[Bot {self.bot_id}] Reconciliation complete: "
+                f"{len(hip3_positions)} on-chain positions, "
+                f"{len(self._open_trades)} tracked"
+            )
+
+        except Exception as e:
+            logger.warning(f"[Bot {self.bot_id}] Position reconciliation failed: {e}")
+
     # ── Lifecycle ──
 
     async def start(self):
@@ -1710,6 +1814,9 @@ class BotEngine:
 
         # Fetch balances once immediately before starting loops
         await self._fetch_balances()
+
+        # Reconcile open positions on Hyperliquid to detect orphans from crashes
+        await self._reconcile_positions()
 
         self._tasks = [
             asyncio.create_task(self._subscribe_orderbooks()),
