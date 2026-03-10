@@ -2,6 +2,7 @@
 BotManager — manages all 6 bot instances, persists state to SQLite,
 reads credentials from environment variables.
 """
+import asyncio
 import json
 import logging
 import os
@@ -337,7 +338,7 @@ class BotManager:
                 "state": engine.state.value if engine else "stopped",
                 "wallet": (engine.account_address[:6] + "..." + engine.account_address[-4:]) if engine and engine.account_address else "",
                 "sub_account": engine.sub_account or "" if engine else "",
-                "collateral": {"usdc": 0, "usdh": 0, "total": 0},
+                "collateral": engine.collateral if engine else {"usdc": 0, "usdh": 0, "total": 0},
                 "ping_ms": 0,
                 "fees_bps": 0.45,
                 "metrics": engine.metrics.to_dict() if engine else BotMetrics().to_dict(),
@@ -364,6 +365,21 @@ class BotManager:
             "zmr": False,
             "close_fee_rt_buffer": False,
         }
+
+    async def refresh_balances(self):
+        """Fetch balances for bots that have credentials but aren't running (stopped bots).
+        Running bots refresh their own balances via _balance_loop.
+        Only refetch if last fetch was >30s ago to avoid spamming the API.
+        """
+        import time
+        now = time.time()
+        tasks = []
+        for engine in self._bots.values():
+            if engine.account_address and engine.state == BotState.STOPPED:
+                if now - engine._last_balance_fetch > 30:
+                    tasks.append(engine._fetch_balances())
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def get_global_stats(self) -> dict:
         total_pnl = 0

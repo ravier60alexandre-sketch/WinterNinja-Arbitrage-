@@ -146,6 +146,11 @@ app.add_middleware(
 # ── GET /api/v1/bots — list all bots with state + metrics ──
 @app.get("/api/v1/bots")
 async def list_bots():
+    # Refresh balances for bots that have credentials (non-blocking, best-effort)
+    try:
+        await asyncio.wait_for(manager.refresh_balances(), timeout=5.0)
+    except Exception:
+        pass
     bots = manager.get_all_bots_view()
     global_stats = manager.get_global_stats()
     return {"bots": bots, "global_stats": global_stats}

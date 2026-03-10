@@ -476,6 +476,10 @@ class BotEngine:
         self._last_order_attempt: float = 0.0
         self._order_cooldown_s: float = 5.0  # Wait 5s between order attempts
 
+        # Account balance tracking
+        self._collateral: dict = {"usdc": 0.0, "usdh": 0.0, "total": 0.0}
+        self._last_balance_fetch: float = 0.0
+
     def set_enabled_pairs(self, pairs: list[str]):
         """Set the list of enabled coin symbols (e.g., ['SILVER', 'TSLA', 'GOLD'])."""
         self._enabled_pairs = pairs
@@ -509,6 +513,70 @@ class BotEngine:
                 if sd is not None:
                     return sd
         return 0  # fallback: whole numbers
+
+    @property
+    def collateral(self) -> dict:
+        """Return the latest collateral/balance snapshot."""
+        return self._collateral
+
+    async def _fetch_balances(self):
+        """Fetch USDC/USDH balances from Hyperliquid clearinghouseState API."""
+        if not self.account_address:
+            return
+
+        trading_address = self.sub_account or self.account_address
+
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api.hyperliquid.xyz/info",
+                    json={"type": "clearinghouseState", "user": trading_address},
+                ) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+
+            margin = data.get("marginSummary", data.get("crossMarginSummary", {}))
+            account_value = float(margin.get("accountValue", 0))
+
+            # Check for multi-collateral balances (USDC + USDH)
+            balances = data.get("balances", [])
+            usdc = 0.0
+            usdh = 0.0
+            for b in balances:
+                token = b.get("coin", "").upper()
+                hold = float(b.get("hold", 0))
+                total_bal = float(b.get("total", 0))
+                if token == "USDC":
+                    usdc = total_bal
+                elif token in ("USDH", "USD"):
+                    usdh = total_bal
+
+            # If no multi-collateral breakdown, use accountValue as USDC
+            if usdc == 0 and usdh == 0 and account_value > 0:
+                usdc = account_value
+
+            self._collateral = {
+                "usdc": round(usdc, 2),
+                "usdh": round(usdh, 2),
+                "total": round(usdc + usdh, 2),
+            }
+            self._last_balance_fetch = time.time()
+
+        except Exception as e:
+            logger.debug(f"[Bot {self.bot_id}] Balance fetch error: {e}")
+
+    async def _balance_loop(self):
+        """Periodically refresh account balances (every 30s)."""
+        while not self._stop_event.is_set():
+            try:
+                await self._fetch_balances()
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"[Bot {self.bot_id}] Balance loop error: {e}")
+                await asyncio.sleep(30)
 
     # ── Hyperliquid Connection ──
 
@@ -1388,10 +1456,14 @@ class BotEngine:
         self.state = BotState.RUNNING
         self._stop_event.clear()
 
+        # Fetch balances once immediately before starting loops
+        await self._fetch_balances()
+
         self._tasks = [
             asyncio.create_task(self._subscribe_orderbooks()),
             asyncio.create_task(self._main_loop()),
             asyncio.create_task(self._funding_loop()),
+            asyncio.create_task(self._balance_loop()),
         ]
 
         logger.info(f"[Bot {self.bot_id}] RUNNING — {self.name} — pairs: {self._enabled_pairs}")
